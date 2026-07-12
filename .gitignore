@@ -1,0 +1,21 @@
+.DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# Experiment outputs and research materials stay local. The GitHub repository
+# contains code, tests, and executable configuration only.
+artifacts/
+results/
+docs/
+paper/
+AGENTS.md
+PROJECT.md
+
+# Scratch work.
+work/
