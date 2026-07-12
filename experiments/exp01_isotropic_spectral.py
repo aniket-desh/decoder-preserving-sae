@@ -861,21 +861,33 @@ def plot_training(curves: list[dict[str, str]], figures: Path) -> None:
         for method in METHOD_ORDER:
             method_rows = grouped_rows(curves, method)
             steps = sorted({int(row["step"]) for row in method_rows})
-            medians, lows, highs = [], [], []
+            seeds = sorted({int(row["seed"]) for row in method_rows})
+            for seed in seeds:
+                seed_rows = sorted(
+                    (row for row in method_rows if int(row["seed"]) == seed),
+                    key=lambda row: int(row["step"]),
+                )
+                ax.plot(
+                    [int(row["step"]) for row in seed_rows],
+                    [float(row[metric]) for row in seed_rows],
+                    color=COLORS[method],
+                    linestyle=LINESTYLES[method],
+                    linewidth=0.7,
+                    alpha=0.14,
+                    label="_nolegend_",
+                )
+            medians = []
             for step in steps:
                 values = [float(row[metric]) for row in method_rows if int(row["step"]) == step]
-                low, median, high = quantiles(values)
-                lows.append(low)
-                medians.append(median)
-                highs.append(high)
+                medians.append(float(np.median(values)))
             ax.plot(
                 steps,
                 medians,
                 color=COLORS[method],
                 linestyle=LINESTYLES[method],
+                linewidth=1.8,
                 label=LABELS[method],
             )
-            ax.fill_between(steps, lows, highs, color=COLORS[method], alpha=0.12, linewidth=0)
         ax.set_title(title)
         ax.set_xlabel("Optimization step")
         ax.set_ylabel(ylabel)
