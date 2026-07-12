@@ -3,6 +3,7 @@ import torch
 
 from dpsae.decoder_distance import (
     batched_ridge_predict,
+    batched_sampled_decoder_loss,
     calibrate_ridge,
     decoder_distance,
     effective_degrees_of_freedom,
@@ -66,6 +67,41 @@ def test_batched_ridge_predict_matches_group_loop() -> None:
         ]
     )
     torch.testing.assert_close(batched, loop, rtol=1e-10, atol=1e-10)
+
+
+def test_batched_sampled_loss_matches_group_loop() -> None:
+    x = torch.randn(4, 12, 5, dtype=torch.float64)
+    x_hat = x + 0.1 * torch.randn_like(x)
+    targets = torch.randn(4, 12, 3, dtype=torch.float64)
+    batched = batched_sampled_decoder_loss(
+        x, x_hat, targets, ridge=0.2, relative=False
+    )
+    loop = torch.stack(
+        [
+            sampled_decoder_loss(
+                x_group,
+                x_hat_group,
+                y_group,
+                ridge=0.2,
+                relative=False,
+            )
+            for x_group, x_hat_group, y_group in zip(x, x_hat, targets)
+        ]
+    ).mean()
+    torch.testing.assert_close(batched, loop, rtol=1e-10, atol=1e-10)
+
+
+def test_structured_target_scaling_sets_prior_weight() -> None:
+    x = torch.randn(3, 10, 4, dtype=torch.float64)
+    x_hat = x + 0.2 * torch.randn_like(x)
+    targets = torch.randn(3, 10, 2, dtype=torch.float64)
+    base = batched_sampled_decoder_loss(
+        x, x_hat, targets, ridge=0.4, relative=False
+    )
+    scaled = batched_sampled_decoder_loss(
+        x, x_hat, 3.0 * targets, ridge=0.4, relative=False
+    )
+    torch.testing.assert_close(scaled, 9.0 * base, rtol=1e-10, atol=1e-10)
 
 
 def test_sampled_loss_matches_manual_prediction_disagreement() -> None:

@@ -97,6 +97,36 @@ def batched_ridge_predict(x: Tensor, targets: Tensor, ridge: float) -> Tensor:
     return targets - regularizer * alpha
 
 
+def batched_sampled_decoder_loss(
+    original: Tensor,
+    reconstructed: Tensor,
+    targets: Tensor,
+    *,
+    ridge: float,
+    relative: bool = True,
+    eps: float = 1e-12,
+) -> Tensor:
+    """Average sampled decoder disagreement over geometry groups.
+
+    All inputs are batched over groups. ``targets`` may contain isotropic
+    probes, structured task targets, or a concatenation of both; column scales
+    therefore define the task-prior second moment without materializing an
+    ``n_samples x n_samples`` covariance matrix.
+    """
+
+    if original.ndim != 3 or reconstructed.ndim != 3 or targets.ndim != 3:
+        raise ValueError("original, reconstructed, and targets must be rank-3")
+    if original.shape[:2] != reconstructed.shape[:2] or original.shape[:2] != targets.shape[:2]:
+        raise ValueError("all inputs must agree on groups and samples")
+    pred_original = batched_ridge_predict(original, targets, ridge)
+    pred_reconstructed = batched_ridge_predict(reconstructed, targets, ridge)
+    numerator = (pred_original - pred_reconstructed).square().sum(dim=(1, 2))
+    if not relative:
+        return numerator.mean()
+    denominator = pred_original.square().sum(dim=(1, 2)).clamp_min(eps)
+    return (numerator / denominator).mean()
+
+
 def ridge_hat_matrix(x: Tensor, ridge: float = 1.0, *, center: bool = False) -> Tensor:
     """Return ``X (X.T X + n * ridge I)^-1 X.T``."""
 

@@ -2,7 +2,12 @@ import pytest
 import torch
 
 from dpsae.decoder_distance import decoder_distance
-from dpsae.spectral import decoder_gains, optimal_decoder_tail, truncated_svd
+from dpsae.spectral import (
+    decoder_gains,
+    optimal_decoder_tail,
+    structured_decoder_scores,
+    truncated_svd,
+)
 
 
 def test_truncated_svd_attains_predicted_decoder_tail() -> None:
@@ -29,3 +34,17 @@ def test_decoder_gain_is_monotone_and_bounded() -> None:
     gains = decoder_gains(singular_values, tau=1.0)
     assert torch.all(gains[1:] > gains[:-1])
     assert torch.all((gains > 0) & (gains < 1))
+
+
+def test_structured_prior_crosses_predicted_selection_boundary() -> None:
+    singular_values = torch.tensor([4.0, 1.0], dtype=torch.float64)
+    gains = decoder_gains(singular_values, tau=1.0)
+    crossover = (gains[0] / gains[1]).square()
+    below = structured_decoder_scores(
+        singular_values, torch.tensor([1.0, 0.9 * crossover]), tau=1.0
+    )
+    above = structured_decoder_scores(
+        singular_values, torch.tensor([1.0, 1.1 * crossover]), tau=1.0
+    )
+    assert below.argmax().item() == 0
+    assert above.argmax().item() == 1

@@ -20,14 +20,36 @@ COLORS = {
     "decoder_only": "#D55E00",
     "theory": "#777777",
     "random": "#AAAAAA",
+    "task_prior": "#CC79A7",
+    "weighted_mse": "#009E73",
+    "permuted_prior": "#D55E00",
 }
-MARKERS = {"mse": "o", "isotropic": "s", "whitened": "D", "decoder_only": "X"}
-LINESTYLES = {"mse": "--", "isotropic": "-", "whitened": "-.", "decoder_only": ":"}
+MARKERS = {
+    "mse": "o",
+    "isotropic": "s",
+    "whitened": "D",
+    "decoder_only": "X",
+    "task_prior": "P",
+    "weighted_mse": "D",
+    "permuted_prior": "X",
+}
+LINESTYLES = {
+    "mse": "--",
+    "isotropic": "-",
+    "whitened": "-.",
+    "decoder_only": ":",
+    "task_prior": "-",
+    "weighted_mse": "-.",
+    "permuted_prior": ":",
+}
 LABELS = {
     "mse": "MSE",
     "isotropic": "MSE + isotropic DPSAE",
     "whitened": "MSE + whitening",
     "decoder_only": "Decoder only",
+    "task_prior": "MSE + task-prior DPSAE",
+    "weighted_mse": "MSE + frozen-task loss",
+    "permuted_prior": "MSE + permuted prior",
 }
 
 

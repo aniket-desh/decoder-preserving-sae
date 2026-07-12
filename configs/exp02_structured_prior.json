@@ -1,0 +1,58 @@
+{
+  "experiment": "exp02_structured_prior",
+  "seeds": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+  "device": "cpu",
+  "dtype": "float32",
+  "threads": 8,
+  "crossover": {
+    "n_samples": 96,
+    "tau": 1.0,
+    "nuisance_strength": 16.0,
+    "protected_strength": 1.0,
+    "relative_weight_min": 0.125,
+    "relative_weight_max": 8.0,
+    "points": 33,
+    "sparse_weight_multiplier": 2.0
+  },
+  "data": {
+    "train_samples": 8192,
+    "validation_samples": 2048,
+    "test_samples": 4096,
+    "input_dim": 32,
+    "true_features": 48,
+    "cluster_count": 8,
+    "correlation": 0.65,
+    "noise_std": 0.02,
+    "nuisance_count": 4,
+    "protected_count": 8,
+    "background_count": 16,
+    "nuisance_amplitude": 6.0,
+    "protected_amplitude": 0.55,
+    "background_amplitude": 1.0,
+    "weak_amplitude": 0.35,
+    "nuisance_probability": 0.05,
+    "protected_probability": 0.18,
+    "background_probability": 0.15,
+    "weak_probability": 0.20
+  },
+  "sae": {
+    "dictionary_size": 64,
+    "top_k": 6,
+    "steps": 8000,
+    "batch_size": 256,
+    "learning_rate": 0.002,
+    "min_learning_rate": 0.0001,
+    "log_every": 250,
+    "geometry_group_size": 64,
+    "isotropic_tasks": 8,
+    "protected_tasks": 4,
+    "target_dof_fraction": 0.25,
+    "gradient_balance_clip": [0.05, 20.0]
+  },
+  "evaluation": {
+    "geometry_groups": 16,
+    "validation_geometry_groups": 4,
+    "heldout_tasks": 16,
+    "group_samples": 2048
+  }
+}
