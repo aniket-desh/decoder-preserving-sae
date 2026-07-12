@@ -28,6 +28,20 @@ def _prepare(x: Tensor, center: bool) -> Tensor:
     return x - x.mean(dim=0, keepdim=True) if center else x
 
 
+def _cholesky_solve(rhs: Tensor, chol: Tensor) -> Tensor:
+    """Solve from a Cholesky factor, including on Apple Metal.
+
+    PyTorch 2.8 does not implement ``torch.cholesky_solve`` on MPS, while its
+    two constituent triangular solves are native Metal kernels. Keep the faster
+    fused helper on other devices and use the equivalent formulation on MPS.
+    """
+
+    if chol.device.type == "mps":
+        intermediate = torch.linalg.solve_triangular(chol, rhs, upper=False)
+        return torch.linalg.solve_triangular(chol.mT, intermediate, upper=True)
+    return torch.cholesky_solve(rhs, chol)
+
+
 def ridge_predict(
     x: Tensor,
     targets: Tensor,
@@ -54,13 +68,13 @@ def ridge_predict(
     if d <= n:
         system = x.mT @ x + regularizer * torch.eye(d, device=x.device, dtype=x.dtype)
         chol = torch.linalg.cholesky(system)
-        weights = torch.cholesky_solve(x.mT @ targets, chol)
+        weights = _cholesky_solve(x.mT @ targets, chol)
         return x @ weights
 
     gram = x @ x.mT
     system = gram + regularizer * torch.eye(n, device=x.device, dtype=x.dtype)
     chol = torch.linalg.cholesky(system)
-    alpha = torch.cholesky_solve(targets, chol)
+    alpha = _cholesky_solve(targets, chol)
     return targets - regularizer * alpha
 
 
@@ -85,7 +99,7 @@ def batched_ridge_predict(x: Tensor, targets: Tensor, ridge: float) -> Tensor:
             d, device=x.device, dtype=x.dtype
         ).expand(groups, d, d)
         chol = torch.linalg.cholesky(system)
-        weights = torch.cholesky_solve(x.mT @ targets, chol)
+        weights = _cholesky_solve(x.mT @ targets, chol)
         return x @ weights
 
     gram = x @ x.mT
@@ -93,7 +107,7 @@ def batched_ridge_predict(x: Tensor, targets: Tensor, ridge: float) -> Tensor:
         n, device=x.device, dtype=x.dtype
     ).expand(groups, n, n)
     chol = torch.linalg.cholesky(system)
-    alpha = torch.cholesky_solve(targets, chol)
+    alpha = _cholesky_solve(targets, chol)
     return targets - regularizer * alpha
 
 
@@ -114,17 +128,47 @@ def batched_sampled_decoder_loss(
     ``n_samples x n_samples`` covariance matrix.
     """
 
-    if original.ndim != 3 or reconstructed.ndim != 3 or targets.ndim != 3:
-        raise ValueError("original, reconstructed, and targets must be rank-3")
-    if original.shape[:2] != reconstructed.shape[:2] or original.shape[:2] != targets.shape[:2]:
-        raise ValueError("all inputs must agree on groups and samples")
-    pred_original = batched_ridge_predict(original, targets, ridge)
-    pred_reconstructed = batched_ridge_predict(reconstructed, targets, ridge)
-    numerator = (pred_original - pred_reconstructed).square().sum(dim=(1, 2))
+    numerator_by_target, denominator_by_target = batched_sampled_decoder_statistics(
+        original,
+        reconstructed,
+        targets,
+        ridge=ridge,
+    )
+    numerator = numerator_by_target.sum(dim=1)
     if not relative:
         return numerator.mean()
-    denominator = pred_original.square().sum(dim=(1, 2)).clamp_min(eps)
+    denominator = denominator_by_target.sum(dim=1).clamp_min(eps)
     return (numerator / denominator).mean()
+
+
+def batched_sampled_decoder_statistics(
+    original: Tensor,
+    reconstructed: Tensor,
+    targets: Tensor,
+    *,
+    ridge: float,
+) -> tuple[Tensor, Tensor]:
+    """Return per-group, per-target decoder error and reference energy.
+
+    Each representation is factored in one batched kernel over all geometry
+    groups, and every target is solved as a matrix right-hand side. The returned
+    tensors have shape ``[groups, targets]``. Their prefix sums evaluate
+    multiple probe counts without repeating either factorization or ridge solve.
+    """
+
+    if original.ndim != 3 or reconstructed.ndim != 3 or targets.ndim != 3:
+        raise ValueError("original, reconstructed, and targets must be rank-3")
+    if (
+        original.shape[:2] != reconstructed.shape[:2]
+        or original.shape[:2] != targets.shape[:2]
+    ):
+        raise ValueError("all inputs must agree on groups and samples")
+
+    pred_original = batched_ridge_predict(original, targets, ridge)
+    pred_reconstructed = batched_ridge_predict(reconstructed, targets, ridge)
+    numerator = (pred_original - pred_reconstructed).square().sum(dim=1)
+    denominator = pred_original.square().sum(dim=1)
+    return numerator, denominator
 
 
 def ridge_hat_matrix(x: Tensor, ridge: float = 1.0, *, center: bool = False) -> Tensor:

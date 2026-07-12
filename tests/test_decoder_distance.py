@@ -4,6 +4,7 @@ import torch
 from dpsae.decoder_distance import (
     batched_ridge_predict,
     batched_sampled_decoder_loss,
+    batched_sampled_decoder_statistics,
     calibrate_ridge,
     decoder_distance,
     effective_degrees_of_freedom,
@@ -89,6 +90,53 @@ def test_batched_sampled_loss_matches_group_loop() -> None:
         ]
     ).mean()
     torch.testing.assert_close(batched, loop, rtol=1e-10, atol=1e-10)
+
+    batched_relative = batched_sampled_decoder_loss(
+        x, x_hat, targets, ridge=0.2, relative=True
+    )
+    loop_relative = torch.stack(
+        [
+            sampled_decoder_loss(
+                x_group,
+                x_hat_group,
+                y_group,
+                ridge=0.2,
+                relative=True,
+            )
+            for x_group, x_hat_group, y_group in zip(x, x_hat, targets)
+        ]
+    ).mean()
+    torch.testing.assert_close(
+        batched_relative, loop_relative, rtol=1e-10, atol=1e-10
+    )
+
+
+def test_probe_count_prefixes_reuse_per_target_statistics() -> None:
+    x = torch.randn(4, 12, 5, dtype=torch.float64)
+    x_hat = x + 0.1 * torch.randn_like(x)
+    targets = torch.randn(4, 12, 7, dtype=torch.float64)
+    numerator, denominator = batched_sampled_decoder_statistics(
+        x, x_hat, targets, ridge=0.2
+    )
+
+    for count in (1, 3, 7):
+        prefix_loss = (
+            numerator[:, :count].sum(dim=1)
+            / denominator[:, :count].sum(dim=1)
+        ).mean()
+        direct_loss = batched_sampled_decoder_loss(
+            x, x_hat, targets[:, :, :count], ridge=0.2
+        )
+        torch.testing.assert_close(prefix_loss, direct_loss, rtol=1e-10, atol=1e-10)
+
+
+def test_batched_sampled_loss_backpropagates_to_reconstruction() -> None:
+    x = torch.randn(4, 12, 5)
+    x_hat = torch.randn(4, 12, 5, requires_grad=True)
+    targets = torch.randn(4, 12, 7)
+    batched_sampled_decoder_loss(x, x_hat, targets, ridge=0.2).backward()
+    assert x_hat.grad is not None
+    assert torch.isfinite(x_hat.grad).all()
 
 
 def test_structured_target_scaling_sets_prior_weight() -> None:

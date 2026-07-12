@@ -1,0 +1,45 @@
+{
+  "experiment": "exp03_estimator_scaling",
+  "seed": 20260712,
+  "threads": 4,
+  "estimator_device": "cpu",
+  "synthetic": {
+    "width": 768,
+    "group_size": 128,
+    "groups": 8,
+    "effective_ranks": [1, 4, 16, 64, 128],
+    "probe_counts": [1, 2, 4, 8, 16, 32],
+    "trials": 256,
+    "ridge": 1.0,
+    "original_gain": 0.75,
+    "gain_gap": 0.25
+  },
+  "activations": {
+    "model_name": "gpt2",
+    "dataset_name": "Salesforce/wikitext",
+    "dataset_config": "wikitext-2-raw-v1",
+    "dataset_split": "train",
+    "layer": 8,
+    "tokens": 8192,
+    "sequence_length": 128,
+    "batch_size": 8,
+    "device": "auto",
+    "local_files_only": true,
+    "reconstruction_nmse": 0.1
+  },
+  "activation_estimator": {
+    "group_sizes": [64, 128, 256],
+    "target_dof_fractions": [0.1, 0.25, 0.5, 0.75, 0.9, 0.97, 0.995],
+    "primary_dof_fraction": 0.25,
+    "probe_counts": [1, 2, 4, 8, 16, 32],
+    "trials": 128,
+    "calibration_groups": 4
+  },
+  "systems": {
+    "batch_samples": 1024,
+    "probe_count": 16,
+    "warmup": 5,
+    "repeats": 30,
+    "backend_repeats": 20
+  }
+}

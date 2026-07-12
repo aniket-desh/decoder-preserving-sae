@@ -1,0 +1,56 @@
+{
+  "experiment": "exp04_ioi_mechanism",
+  "model_name": "openai-community/gpt2",
+  "layer": 8,
+  "seed": 20260712,
+  "corpus": {
+    "dataset_name": "HuggingFaceFW/fineweb",
+    "dataset_config": "sample-10BT",
+    "split": "train",
+    "token_count": 180000000,
+    "ranges": {
+      "calibration": [0, 10000000],
+      "screen": [10000000, 50000000],
+      "confirmation": [50000000, 120000000],
+      "robustness": [120000000, 170000000],
+      "validation": [170000000, 180000000]
+    }
+  },
+  "sae": {
+    "dictionary_size": 16384,
+    "primary_k": 32,
+    "learning_rate": 0.0003,
+    "warmup_fraction": 0.02,
+    "aux_weight": 0.03125,
+    "dead_after_steps": 2000,
+    "aux_k": 512
+  },
+  "training": {
+    "sequence_length": 256,
+    "sequences_per_batch": 8,
+    "screen_tokens": 25000000,
+    "confirmation_tokens": 100000000,
+    "robustness_tokens": 50000000,
+    "checkpoint_tokens": 5000000,
+    "log_every_steps": 25,
+    "confirmation_seeds": [0, 1, 2],
+    "robustness_seeds": [0, 1, 2],
+    "decoder_weight_multipliers": [0.125, 0.25, 0.5, 1.0]
+  },
+  "geometry": {
+    "group_size": 128,
+    "probes": 16,
+    "ridge_dof_fraction": 0.25,
+    "calibration_tokens": 65536,
+    "validation_tokens": 32768
+  },
+  "ioi": {
+    "discovery_examples": 4096,
+    "validation_examples": 2048,
+    "test_examples": 4096,
+    "causal_examples": 1024,
+    "batch_size": 64,
+    "feature_counts": [1, 2, 4, 8, 16, 32, 64, 128],
+    "collateral_sequences": 256
+  }
+}
