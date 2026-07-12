@@ -19,3 +19,8 @@ PROJECT.md
 
 # Scratch work.
 work/
+
+# Generated experiment artifacts stay local; experiment source remains tracked.
+experiments/figures/
+experiments/outputs/
+experiments/logs/

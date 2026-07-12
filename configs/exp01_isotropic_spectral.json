@@ -1,0 +1,46 @@
+{
+  "experiment": "exp01_isotropic_spectral",
+  "seeds": [0, 1, 2],
+  "device": "cpu",
+  "dtype": "float32",
+  "threads": 8,
+  "analytic": {
+    "n_samples": 96,
+    "n_features": 64,
+    "rank": 24,
+    "tau": 1.0,
+    "random_candidates": 32
+  },
+  "data": {
+    "train_samples": 8192,
+    "test_samples": 4096,
+    "input_dim": 32,
+    "true_features": 48,
+    "cluster_count": 8,
+    "correlation": 0.65,
+    "noise_std": 0.02,
+    "nuisance_count": 4,
+    "moderate_count": 24,
+    "nuisance_amplitude": 6.0,
+    "moderate_amplitude": 1.0,
+    "weak_amplitude": 0.35,
+    "nuisance_probability": 0.05,
+    "moderate_probability": 0.15,
+    "weak_probability": 0.20
+  },
+  "sae": {
+    "dictionary_size": 64,
+    "top_k": 6,
+    "steps": 1200,
+    "batch_size": 256,
+    "learning_rate": 0.002,
+    "geometry_group_size": 64,
+    "random_tasks": 8,
+    "target_dof_fraction": 0.25,
+    "gradient_balance_clip": [0.05, 20.0]
+  },
+  "evaluation": {
+    "geometry_groups": 16,
+    "support_threshold": 0.0
+  }
+}

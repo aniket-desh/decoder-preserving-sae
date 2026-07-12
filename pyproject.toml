@@ -9,6 +9,9 @@ description = "Decoder-preserving objectives for sparse autoencoders"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "matplotlib>=3.9",
+  "numpy>=2.0",
+  "scipy>=1.13",
   "torch>=2.4",
 ]
 
@@ -27,4 +30,3 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-
