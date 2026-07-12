@@ -315,6 +315,7 @@ def train_method(
     method: str,
     initial_state: dict[str, torch.Tensor],
     train: torch.Tensor,
+    validation: torch.Tensor,
     batch_indices: torch.Tensor,
     whitening: torch.Tensor,
     config: dict[str, Any],
@@ -323,12 +324,18 @@ def train_method(
     gamma_decoder: float,
     gamma_white: float,
     seed: int,
+    validation_geometry_groups: int,
 ) -> tuple[TiedSignedTopKSAE, list[dict[str, Any]], float]:
     model = TiedSignedTopKSAE(
         train.shape[1], config["dictionary_size"], config["top_k"], seed=seed
     ).to(train.device)
     model.load_state_dict(initial_state)
     optimizer = torch.optim.Adam(model.parameters(), lr=config["learning_rate"])
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=len(batch_indices),
+        eta_min=config["min_learning_rate"],
+    )
     task_generator = torch.Generator(device=train.device).manual_seed(100_000 + seed)
     curves: list[dict[str, Any]] = []
     start_time = time.perf_counter()
@@ -368,8 +375,9 @@ def train_method(
         objective.backward()
         optimizer.step()
         model.normalize_dictionary_()
+        scheduler.step()
 
-        if step == 1 or step % 100 == 0 or step == len(batch_indices):
+        if step == 1 or step % config["log_every"] == 0 or step == len(batch_indices):
             with torch.no_grad():
                 log_generator = torch.Generator(device=train.device).manual_seed(
                     200_000 + 10_000 * seed + step
@@ -385,6 +393,17 @@ def train_method(
                 log_white = normalized_whitened_mse(
                     batch, reconstruction.detach(), whitening
                 )
+                validation_reconstruction, _ = model(validation)
+                validation_nmse = normalized_mse(
+                    validation, validation_reconstruction
+                ).item()
+                validation_decoder_distortion = exact_relative_decoder_distortion(
+                    validation,
+                    validation_reconstruction,
+                    ridge=ridge,
+                    group_size=config["geometry_group_size"],
+                    groups=validation_geometry_groups,
+                )
             curves.append(
                 {
                     "seed": seed,
@@ -394,11 +413,14 @@ def train_method(
                     "nmse": nmse.item(),
                     "decoder_loss": log_decoder.item(),
                     "whitened_loss": log_white.item(),
+                    "validation_nmse": validation_nmse,
+                    "validation_decoder_distortion": validation_decoder_distortion,
+                    "learning_rate": optimizer.param_groups[0]["lr"],
                 }
             )
             print(
                 f"seed={seed} method={method:12s} step={step:4d}/{len(batch_indices)} "
-                f"nmse={nmse.item():.4f} dec={log_decoder.item():.4f}",
+                f"val_nmse={validation_nmse:.4f} val_dec={validation_decoder_distortion:.4f}",
                 flush=True,
             )
     return model, curves, time.perf_counter() - start_time
@@ -479,6 +501,15 @@ def run_sparse(config: dict[str, Any], seeds: list[int]) -> tuple[list, list, li
             seed=20_000 + seed,
             groups=feature_groups,
         )
+        validation_raw, _ = sample_sparse_data(
+            data_config["validation_samples"],
+            dictionary,
+            amplitudes,
+            probabilities,
+            noise_std=data_config["noise_std"],
+            seed=25_000 + seed,
+            groups=feature_groups,
+        )
         test_raw, test_codes = sample_sparse_data(
             data_config["test_samples"],
             dictionary,
@@ -489,6 +520,7 @@ def run_sparse(config: dict[str, Any], seeds: list[int]) -> tuple[list, list, li
             groups=feature_groups,
         )
         train, test, train_mean, train_rms = fixed_preprocess(train_raw, test_raw)
+        validation = (validation_raw - train_mean) / train_rms
         whitening = whitening_matrix(train)
         calibration_group = train[: sae_config["geometry_group_size"]]
         ridge = calibrate_ridge(
@@ -561,6 +593,7 @@ def run_sparse(config: dict[str, Any], seeds: list[int]) -> tuple[list, list, li
                 method,
                 initial_state,
                 train,
+                validation,
                 batch_indices,
                 whitening,
                 sae_config,
@@ -568,6 +601,9 @@ def run_sparse(config: dict[str, Any], seeds: list[int]) -> tuple[list, list, li
                 gamma_decoder=gamma_decoder,
                 gamma_white=gamma_white,
                 seed=seed,
+                validation_geometry_groups=evaluation_config[
+                    "validation_geometry_groups"
+                ],
             )
             all_curves.extend(curves)
             with torch.no_grad():
@@ -814,8 +850,13 @@ def plot_recovery(groups: list[dict[str, str]], figures: Path) -> None:
 def plot_training(curves: list[dict[str, str]], figures: Path) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(6.8, 2.7))
     for ax, metric, title, ylabel in (
-        (axes[0], "nmse", "Training reconstruction", "Batch NMSE"),
-        (axes[1], "decoder_loss", "Training decoder preservation", "Sampled relative distortion"),
+        (axes[0], "validation_nmse", "Validation reconstruction", "Validation NMSE"),
+        (
+            axes[1],
+            "validation_decoder_distortion",
+            "Validation decoder preservation",
+            "Exact relative distortion",
+        ),
     ):
         for method in METHOD_ORDER:
             method_rows = grouped_rows(curves, method)
@@ -871,9 +912,12 @@ def main() -> None:
         config = deepcopy(config)
         config["seeds"] = [0]
         config["data"]["train_samples"] = 1024
+        config["data"]["validation_samples"] = 256
         config["data"]["test_samples"] = 512
         config["sae"]["steps"] = 10
+        config["sae"]["log_every"] = 5
         config["evaluation"]["geometry_groups"] = 2
+        config["evaluation"]["validation_geometry_groups"] = 2
         config["evaluation"]["group_samples"] = 256
         config["analytic"]["random_candidates"] = 3
     torch.set_num_threads(config.get("threads", 8))

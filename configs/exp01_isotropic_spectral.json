@@ -13,6 +13,7 @@
   },
   "data": {
     "train_samples": 8192,
+    "validation_samples": 2048,
     "test_samples": 4096,
     "input_dim": 32,
     "true_features": 48,
@@ -31,9 +32,11 @@
   "sae": {
     "dictionary_size": 64,
     "top_k": 6,
-    "steps": 4000,
+    "steps": 8000,
     "batch_size": 256,
     "learning_rate": 0.002,
+    "min_learning_rate": 0.0001,
+    "log_every": 250,
     "geometry_group_size": 64,
     "random_tasks": 8,
     "target_dof_fraction": 0.25,
@@ -41,6 +44,7 @@
   },
   "evaluation": {
     "geometry_groups": 16,
+    "validation_geometry_groups": 4,
     "support_threshold": 0.0
   }
 }
