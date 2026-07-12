@@ -31,7 +31,7 @@
   "sae": {
     "dictionary_size": 64,
     "top_k": 6,
-    "steps": 1200,
+    "steps": 4000,
     "batch_size": 256,
     "learning_rate": 0.002,
     "geometry_group_size": 64,
