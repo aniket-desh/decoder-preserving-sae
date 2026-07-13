@@ -25,7 +25,6 @@ from dpsae.mech_analysis import (
     build_examples,
     collect_state_activations,
     load_sae,
-    write_json,
 )
 
 
@@ -92,6 +91,22 @@ def save_torch(path: Path, value) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     torch.save(value, temporary)
     temporary.replace(path)
+
+
+def load_partial_analysis(path: Path, expected_models: set[str]) -> dict[str, dict]:
+    if not path.exists():
+        return {}
+    value = json.loads(path.read_text())
+    if not isinstance(value, dict):
+        raise ValueError(f"partial analysis must be an object: {path}")
+    unexpected = set(value) - expected_models
+    malformed = [name for name, result in value.items() if not isinstance(result, dict)]
+    if unexpected or malformed:
+        raise ValueError(
+            f"invalid partial analysis {path}: unexpected={sorted(unexpected)}, "
+            f"malformed={sorted(malformed)}"
+        )
+    return value
 
 
 def make_batcher(
@@ -448,8 +463,12 @@ def analyze(
         if not model_path.exists():
             raise FileNotFoundError(f"missing trained models for {stage}: {model_path}")
         payloads = torch.load(model_path, map_location="cpu")
-        stage_result = {}
+        stage_path = experiment_paths["output"] / f"analysis_{stage}.json"
+        stage_result = load_partial_analysis(stage_path, set(payloads))
         for name, payload in payloads.items():
+            if name in stage_result:
+                print(f"analysis already complete: {stage}/{name}", flush=True)
+                continue
             print(f"analyzing {stage}/{name}", flush=True)
             model = load_sae(payload, input_dim=lm.model.config.n_embd, device=device)
             stage_result[name] = analyze_model(
@@ -465,9 +484,9 @@ def analyze(
             del model
             if device.type == "cuda":
                 torch.cuda.empty_cache()
+            save_json(stage_path, stage_result)
         result[stage] = stage_result
-        write_json(experiment_paths["output"] / f"analysis_{stage}.json", stage_result)
-    write_json(analysis_path, result)
+    save_json(analysis_path, result)
 
 
 def plot_results(config: dict, experiment_paths: dict[str, Path]) -> None:
