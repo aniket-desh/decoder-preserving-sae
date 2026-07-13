@@ -12,6 +12,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PROBABILITY_TOLERANCE = 1e-6
 
 
 def read_json(path: Path, errors: list[str]) -> Any | None:
@@ -118,7 +119,11 @@ def check_probe_metrics(row: Any, label: str, errors: list[str]) -> None:
         return
     for metric in ("accuracy", "auc"):
         value = row.get(metric)
-        if not finite_number(value) or not 0 <= value <= 1:
+        if (
+            not finite_number(value)
+            or value < -PROBABILITY_TOLERANCE
+            or value > 1 + PROBABILITY_TOLERANCE
+        ):
             errors.append(f"{label}: invalid {metric}: {value!r}")
 
 

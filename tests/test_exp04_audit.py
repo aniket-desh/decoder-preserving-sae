@@ -123,3 +123,30 @@ def test_missing_exp04_model_is_reported(tmp_path: Path):
 
     assert report["status"] == "failed"
     assert any("missing validation models" in error for error in report["errors"])
+
+
+def test_probe_metric_allows_float32_roundoff_at_one(tmp_path: Path):
+    build_complete_artifacts(tmp_path)
+    analysis_path = tmp_path / "analysis.json"
+    analysis = json.loads(analysis_path.read_text())
+    analysis["confirmation"]["mse_s0"]["sparse_probe_curve"][0]["auc"] = (
+        1.0 + 2.0**-22
+    )
+    write_json(analysis_path, analysis)
+
+    report = run_audit(tmp_path)
+
+    assert report["status"] == "passed"
+
+
+def test_probe_metric_rejects_material_probability_overshoot(tmp_path: Path):
+    build_complete_artifacts(tmp_path)
+    analysis_path = tmp_path / "analysis.json"
+    analysis = json.loads(analysis_path.read_text())
+    analysis["confirmation"]["mse_s0"]["sparse_probe_curve"][0]["auc"] = 1.001
+    write_json(analysis_path, analysis)
+
+    report = run_audit(tmp_path)
+
+    assert report["status"] == "failed"
+    assert any("invalid auc" in error for error in report["errors"])
