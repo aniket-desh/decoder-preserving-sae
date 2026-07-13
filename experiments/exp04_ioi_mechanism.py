@@ -11,6 +11,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from torch import Tensor
 
 from dpsae.corpus import MemmapTokenBatcher, TokenRange, prepare_token_memmap
 from dpsae.decoder_distance import batched_ridge_predict, calibrate_ridge
