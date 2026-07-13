@@ -166,9 +166,10 @@ class TrainingFleet:
                     raise RuntimeError("whitening method requires an operator")
                 weighted_residual = residual[index] @ self.whitening
                 weighted_original = activations @ self.whitening
-                primary.append(
+                whitened_nmse = (
                     weighted_residual.square().sum() / weighted_original.square().sum()
                 )
+                primary.append(mse[index] + whitened_nmse)
             else:
                 primary.append(mse[index])
 
