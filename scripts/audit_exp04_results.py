@@ -132,7 +132,15 @@ def audit_analysis(artifact_dir: Path, config: dict, errors: list[str]) -> dict:
     analysis = read_json(artifact_dir / "analysis.json", errors)
     if analysis is None:
         return {}
+    expected_protocol = {"model": config["model_name"], "layer": config["layer"]}
+    if analysis.get("protocol") != expected_protocol:
+        errors.append(
+            f"analysis: protocol mismatch; expected={expected_protocol}, "
+            f"observed={analysis.get('protocol')!r}"
+        )
     feature_counts = config["ioi"]["feature_counts"]
+    maximum = max(feature_counts)
+    dictionary_size = config["sae"]["dictionary_size"]
     summary = {}
     for stage in ("confirmation", "robustness16", "robustness64"):
         expected = expected_models(config, stage)
@@ -172,13 +180,50 @@ def audit_analysis(artifact_dir: Path, config: dict, errors: list[str]) -> dict:
                 errors.append(f"analysis/{stage}/{name}: invalid 80% threshold {threshold!r}")
             if threshold is not None:
                 threshold_values.setdefault(method_name(name), []).append(threshold)
+            for key in ("ranked_features", "matched_random_features"):
+                features = row.get(key)
+                if (
+                    not isinstance(features, list)
+                    or len(features) != maximum
+                    or len(set(features)) != maximum
+                    or not all(
+                        isinstance(feature, int) and 0 <= feature < dictionary_size
+                        for feature in features
+                    )
+                ):
+                    errors.append(f"analysis/{stage}/{name}: invalid {key}")
             if stage == "confirmation":
                 causal = row.get("causal_frontier")
                 collateral = row.get("collateral_frontier")
                 if feature_axis(causal) != feature_counts:
                     errors.append(f"analysis/{stage}/{name}: malformed causal frontier")
+                else:
+                    for index, item in enumerate(causal):
+                        for metric in (
+                            "full_logit_difference",
+                            "ablation_effect",
+                            "abc_patch_effect",
+                            "random_patch_effect",
+                        ):
+                            if not finite_number(item.get(metric)):
+                                errors.append(
+                                    f"analysis/{stage}/{name}/causal/{index}: "
+                                    f"invalid {metric}: {item.get(metric)!r}"
+                                )
                 if feature_axis(collateral) != feature_counts:
                     errors.append(f"analysis/{stage}/{name}: malformed collateral frontier")
+                else:
+                    for index, item in enumerate(collateral):
+                        for metric in (
+                            "collateral_kl",
+                            "original_cross_entropy",
+                            "reconstruction_cross_entropy",
+                        ):
+                            if not finite_number(item.get(metric)):
+                                errors.append(
+                                    f"analysis/{stage}/{name}/collateral/{index}: "
+                                    f"invalid {metric}: {item.get(metric)!r}"
+                                )
         summary[stage] = {
             method: statistics.median(values)
             for method, values in threshold_values.items()

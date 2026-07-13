@@ -19,6 +19,9 @@ def write_json(path: Path, value) -> None:
 
 def build_complete_artifacts(root: Path) -> None:
     config = {
+        "model_name": "test",
+        "layer": 1,
+        "sae": {"dictionary_size": 8},
         "training": {
             "decoder_weight_multipliers": [0.25],
             "confirmation_seeds": [0],
@@ -62,14 +65,27 @@ def build_complete_artifacts(root: Path) -> None:
                 "original_dense_probe": {"accuracy": 0.8, "auc": 0.85},
                 "reconstruction_dense_probe": {"accuracy": 0.78, "auc": 0.82},
                 "features_to_80pct_dense": 2,
+                "ranked_features": [0, 1],
+                "matched_random_features": [2, 3],
             }
             if stage == "confirmation":
                 row["causal_frontier"] = [
-                    {"features": count, "abc_patch_effect": 0.1}
+                    {
+                        "features": count,
+                        "full_logit_difference": 1.0,
+                        "ablation_effect": 0.2,
+                        "abc_patch_effect": 0.1,
+                        "random_patch_effect": 0.01,
+                    }
                     for count in config["ioi"]["feature_counts"]
                 ]
                 row["collateral_frontier"] = [
-                    {"features": count, "collateral_kl": 0.01}
+                    {
+                        "features": count,
+                        "collateral_kl": 0.01,
+                        "original_cross_entropy": 3.0,
+                        "reconstruction_cross_entropy": 3.1,
+                    }
                     for count in config["ioi"]["feature_counts"]
                 ]
             stage_result[name] = row
