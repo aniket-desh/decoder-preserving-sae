@@ -157,7 +157,11 @@ def calibrate(config: dict, experiment_paths: dict[str, Path], device: torch.dev
     whitening = whitening_operator(normalized)
     group_size = config["geometry"]["group_size"]
     ridge_values = []
-    for group in normalized[: (len(normalized) // group_size) * group_size].split(group_size):
+    ridge_group_tokens = min(
+        len(normalized),
+        config["geometry"]["ridge_calibration_groups"] * group_size,
+    )
+    for group in normalized[:ridge_group_tokens].split(group_size):
         ridge_values.append(
             calibrate_ridge(group, config["geometry"]["ridge_dof_fraction"])
         )

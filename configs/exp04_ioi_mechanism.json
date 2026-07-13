@@ -41,6 +41,7 @@
     "group_size": 128,
     "probes": 16,
     "ridge_dof_fraction": 0.25,
+    "ridge_calibration_groups": 32,
     "calibration_tokens": 65536,
     "validation_tokens": 32768
   },
