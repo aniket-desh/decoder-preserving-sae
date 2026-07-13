@@ -6,6 +6,10 @@ DATASET_REPO="${2:?usage: backup_exp04b_hf.sh MODEL_REPO DATASET_REPO [ARTIFACT_
 ARTIFACT_DIR="${3:-artifacts/exp04b_confirmatory}"
 MARKERS="$ARTIFACT_DIR/.hf_backup"
 
+if [[ -z "${HF_HOME:-}" && -d /workspace/huggingface ]]; then
+  export HF_HOME=/workspace/huggingface
+fi
+
 mkdir -p "$MARKERS"
 hf auth whoami >/dev/null
 hf repos create "$MODEL_REPO" --private --exist-ok >/dev/null
