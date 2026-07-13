@@ -204,6 +204,9 @@ def audit_analysis(artifact_dir: Path, config: dict, errors: list[str]) -> dict:
                             "ablation_effect",
                             "abc_patch_effect",
                             "random_patch_effect",
+                            "ablation_relative_activation_change",
+                            "abc_patch_relative_activation_change",
+                            "random_patch_relative_activation_change",
                         ):
                             if not finite_number(item.get(metric)):
                                 errors.append(
@@ -232,6 +235,8 @@ def audit_analysis(artifact_dir: Path, config: dict, errors: list[str]) -> dict:
         artifact_dir / "ioi_state_activations.pt",
         artifact_dir / "figures" / "exp04_headline.pdf",
         artifact_dir / "figures" / "exp04_headline.png",
+        artifact_dir / "figures" / "exp04_feature_traces.pdf",
+        artifact_dir / "figures" / "exp04_feature_traces.png",
     ):
         if not path.is_file() or path.stat().st_size == 0:
             errors.append(f"missing or empty final artifact: {path}")

@@ -584,6 +584,61 @@ def plot_results(config: dict, experiment_paths: dict[str, Path]) -> None:
     savefig(fig, experiment_paths["output"] / "figures" / "exp04_headline")
     plt.close(fig)
 
+    trace_models = (
+        ("mse_s0", "MSE"),
+        ("dpsae_s0", "Isotropic DPSAE"),
+        ("whitening_s0", "Whitening"),
+    )
+    trace_fig, trace_axes = plt.subplots(3, 1, figsize=(12.2, 6.2), sharex=True)
+    position_styles = {
+        "io_position": (COLORS["decoder_only"], "IO"),
+        "s1_position": (COLORS["mse"], "S1"),
+        "s2_position": (COLORS["isotropic"], "S2"),
+    }
+    for axis, (name, label) in zip(trace_axes, trace_models):
+        trace = confirmation[name]["feature_trace"]
+        values = np.asarray(trace["activations"], dtype=float)
+        scale = np.maximum(values.max(axis=1, keepdims=True), 1e-12)
+        axis.imshow(
+            values / scale,
+            aspect="auto",
+            interpolation="nearest",
+            cmap="magma",
+            vmin=0,
+            vmax=1,
+        )
+        axis.set_yticks(
+            np.arange(len(trace["features"])),
+            [f"f{feature}" for feature in trace["features"]],
+        )
+        axis.set_ylabel(label)
+        for key, (color, _position_label) in position_styles.items():
+            axis.axvline(trace[key], color=color, linewidth=1.2, alpha=0.9)
+        clean_axis(axis)
+    tokens = confirmation["mse_s0"]["feature_trace"]["tokens"]
+    trace_axes[-1].set_xticks(np.arange(len(tokens)), tokens, rotation=70, ha="right")
+    trace_axes[-1].set_xlabel("IOI prompt token")
+    trace_fig.suptitle("Individual discovery-ranked feature traces on a held-out IOI prompt")
+    from matplotlib.lines import Line2D
+
+    position_handles = [
+        Line2D([0], [0], color=color, label=label)
+        for color, label in position_styles.values()
+    ]
+    trace_fig.legend(
+        handles=position_handles,
+        loc="upper center",
+        ncol=3,
+        frameon=False,
+        bbox_to_anchor=(0.5, 0.95),
+    )
+    trace_fig.subplots_adjust(top=0.86, bottom=0.22, hspace=0.16)
+    savefig(
+        trace_fig,
+        experiment_paths["output"] / "figures" / "exp04_feature_traces",
+    )
+    plt.close(trace_fig)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()

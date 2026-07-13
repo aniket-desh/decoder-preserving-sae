@@ -76,6 +76,9 @@ def build_complete_artifacts(root: Path) -> None:
                         "ablation_effect": 0.2,
                         "abc_patch_effect": 0.1,
                         "random_patch_effect": 0.01,
+                        "ablation_relative_activation_change": 0.02,
+                        "abc_patch_relative_activation_change": 0.03,
+                        "random_patch_relative_activation_change": 0.02,
                     }
                     for count in config["ioi"]["feature_counts"]
                 ]
@@ -96,6 +99,8 @@ def build_complete_artifacts(root: Path) -> None:
     figures.mkdir()
     (figures / "exp04_headline.pdf").write_bytes(b"pdf")
     (figures / "exp04_headline.png").write_bytes(b"png")
+    (figures / "exp04_feature_traces.pdf").write_bytes(b"pdf")
+    (figures / "exp04_feature_traces.png").write_bytes(b"png")
 
 
 def test_complete_exp04_artifact_tree_passes(tmp_path: Path):

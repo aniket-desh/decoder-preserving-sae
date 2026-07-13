@@ -212,12 +212,18 @@ def make_replacement(
     features: Tensor | None = None,
     patch_values: Tensor | None = None,
     ablate_everywhere: bool = False,
+    diagnostics: dict[str, list[float]] | None = None,
 ):
     def replacement(hidden: Tensor) -> Tensor:
         shape = hidden.shape
         normalized = stats.normalize(hidden).reshape(-1, shape[-1])
         _, code = model(normalized, use_threshold=True)
         code = code.reshape(shape[0], shape[1], -1)
+        baseline = None
+        if diagnostics is not None and positions is not None:
+            diagnostic_rows = torch.arange(shape[0], device=code.device)
+            diagnostic_positions = positions.to(code.device)
+            baseline = model.decode(code[diagnostic_rows, diagnostic_positions])
         if features is not None:
             feature_ids = features.to(code.device)
             if ablate_everywhere:
@@ -228,6 +234,16 @@ def make_replacement(
                 columns = feature_ids[None, :]
                 values = 0 if patch_values is None else patch_values.to(code.device)
                 code[rows, token_positions, columns] = values
+        if diagnostics is not None and positions is not None and baseline is not None:
+            intervened = model.decode(code[diagnostic_rows, diagnostic_positions])
+            change = intervened - baseline
+            reference = normalized.reshape(shape)[diagnostic_rows, diagnostic_positions]
+            relative_change = (
+                change.float().square().sum() / reference.float().square().sum().clamp_min(1e-12)
+            ).sqrt()
+            diagnostics.setdefault("relative_activation_change", []).append(
+                float(relative_change.detach())
+            )
         reconstruction = model.decode(code.reshape(-1, code.shape[-1])).reshape(shape)
         return stats.denormalize(reconstruction)
 
@@ -273,7 +289,15 @@ def causal_frontier(
     examples = examples[: config["ioi"]["causal_examples"]]
     abc_state = abc_state[: len(examples)]
     feature_counts = config["ioi"]["feature_counts"]
-    keys = ("full", "ablated", "patched", "random_patched")
+    keys = (
+        "full",
+        "ablated",
+        "patched",
+        "random_patched",
+        "ablated_relative_change",
+        "patched_relative_change",
+        "random_patched_relative_change",
+    )
     accumulators = {count: {key: [] for key in keys} for count in feature_counts}
     batch_size = config["ioi"]["batch_size"]
     for start in range(0, len(examples), batch_size):
@@ -298,26 +322,23 @@ def causal_frontier(
         for count in feature_counts:
             selected = ranking[:count]
             random_features = random_ranking[:count]
-            interventions = {
-                "ablated": make_replacement(
-                    model, stats, positions=s2_positions, features=selected
-                ),
-                "patched": make_replacement(
+            interventions = {}
+            for key, features, values in (
+                ("ablated", selected, None),
+                ("patched", selected, abc_code[:, selected]),
+                ("random_patched", random_features, abc_code[:, random_features]),
+            ):
+                diagnostics: dict[str, list[float]] = {}
+                replacement = make_replacement(
                     model,
                     stats,
                     positions=s2_positions,
-                    features=selected,
-                    patch_values=abc_code[:, selected],
-                ),
-                "random_patched": make_replacement(
-                    model,
-                    stats,
-                    positions=s2_positions,
-                    features=random_features,
-                    patch_values=abc_code[:, random_features],
-                ),
-            }
-            for key, replacement in interventions.items():
+                    features=features,
+                    patch_values=values,
+                    diagnostics=diagnostics,
+                )
+                interventions[key] = (replacement, diagnostics)
+            for key, (replacement, diagnostics) in interventions.items():
                 logits = lm.logits(
                     tokenized["input_ids"],
                     tokenized["attention_mask"],
@@ -330,6 +351,12 @@ def causal_frontier(
                     tokenized["subject_token_id"],
                 ).cpu()
                 accumulators[count][key].append(ld)
+                relative_change = diagnostics.get("relative_activation_change")
+                if not relative_change:
+                    raise RuntimeError(f"missing activation-change diagnostic for {key}")
+                accumulators[count][f"{key}_relative_change"].append(
+                    torch.tensor(relative_change)
+                )
             accumulators[count]["full"].append(full_ld)
     rows = []
     for count in feature_counts:
@@ -342,6 +369,15 @@ def causal_frontier(
                 "abc_patch_effect": float((values["full"] - values["patched"]).mean()),
                 "random_patch_effect": float(
                     (values["full"] - values["random_patched"]).mean()
+                ),
+                "ablation_relative_activation_change": float(
+                    values["ablated_relative_change"].mean()
+                ),
+                "abc_patch_relative_activation_change": float(
+                    values["patched_relative_change"].mean()
+                ),
+                "random_patch_relative_activation_change": float(
+                    values["random_patched_relative_change"].mean()
                 ),
             }
         )
