@@ -337,7 +337,7 @@ def train_stage(
     if checkpoint_path.exists():
         state = torch.load(checkpoint_path, map_location=device)
         start_step, tokens_seen = fleet.load_state_dict(state)
-        batcher.generator.set_state(state["batcher_generator_state"])
+        batcher.load_generator_state(state["batcher_generator_state"])
         print(f"resuming {stage} at step {start_step:,}", flush=True)
     metrics_path = output / "training.jsonl"
     started = time.monotonic()

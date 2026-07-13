@@ -121,3 +121,8 @@ class MemmapTokenBatcher:
             [self.tokens[start : start + self.sequence_length] for start in starts]
         ).astype(np.int64, copy=False)
         return torch.from_numpy(array)
+
+    def load_generator_state(self, state: Tensor) -> None:
+        """Restore a saved CPU generator state after device-mapped checkpoint loading."""
+
+        self.generator.set_state(state.detach().cpu())
