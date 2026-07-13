@@ -5,6 +5,10 @@ MODEL_REPO="${1:?usage: backup_exp04_hf.sh MODEL_REPO DATASET_REPO [ARTIFACT_DIR
 DATASET_REPO="${2:?usage: backup_exp04_hf.sh MODEL_REPO DATASET_REPO [ARTIFACT_DIR]}"
 ARTIFACT_DIR="${3:-artifacts/exp04_ioi_mechanism}"
 
+if [[ -z "${HF_HOME:-}" && -d /workspace/huggingface ]]; then
+  export HF_HOME=/workspace/huggingface
+fi
+
 if ! command -v hf >/dev/null 2>&1; then
   echo "hf CLI is not available; activate the experiment environment first" >&2
   exit 1
