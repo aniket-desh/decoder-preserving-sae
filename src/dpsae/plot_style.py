@@ -12,11 +12,12 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 
-METHOD_ORDER = ["mse", "isotropic", "whitened", "decoder_only"]
+METHOD_ORDER = ["mse", "isotropic", "whitened", "spectral", "decoder_only"]
 COLORS = {
     "mse": "#222222",
     "isotropic": "#0072B2",
     "whitened": "#009E73",
+    "spectral": "#D55E00",
     "decoder_only": "#D55E00",
     "theory": "#777777",
     "random": "#AAAAAA",
@@ -28,6 +29,7 @@ MARKERS = {
     "mse": "o",
     "isotropic": "s",
     "whitened": "D",
+    "spectral": "^",
     "decoder_only": "X",
     "task_prior": "P",
     "weighted_mse": "D",
@@ -37,6 +39,7 @@ LINESTYLES = {
     "mse": "--",
     "isotropic": "-",
     "whitened": "-.",
+    "spectral": ":",
     "decoder_only": ":",
     "task_prior": "-",
     "weighted_mse": "-.",
@@ -46,6 +49,7 @@ LABELS = {
     "mse": "MSE",
     "isotropic": "MSE + isotropic DPSAE",
     "whitened": "MSE + whitening",
+    "spectral": "MSE + static spectral",
     "decoder_only": "Decoder only",
     "task_prior": "MSE + task-prior DPSAE",
     "weighted_mse": "MSE + frozen-task loss",

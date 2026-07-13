@@ -18,10 +18,13 @@ class SAETrainSpec:
     seed: int
     k: int
     decoder_weight: float = 0.0
+    loss_weight: float = 1.0
 
     def __post_init__(self) -> None:
-        if self.method not in {"mse", "dpsae", "whitening"}:
+        if self.method not in {"mse", "dpsae", "whitening", "spectral"}:
             raise ValueError(f"unknown training method: {self.method}")
+        if self.loss_weight < 0:
+            raise ValueError("loss_weight must be nonnegative")
 
 
 def whitening_operator(activations: Tensor, *, floor_fraction: float = 1e-3) -> Tensor:
@@ -32,6 +35,21 @@ def whitening_operator(activations: Tensor, *, floor_fraction: float = 1e-3) -> 
     floor = eigenvalues.mean() * floor_fraction
     inverse_sqrt = eigenvalues.clamp_min(floor).rsqrt()
     return (eigenvectors * inverse_sqrt) @ eigenvectors.mT
+
+
+def spectral_surrogate_operator(activations: Tensor, *, ridge: float) -> Tensor:
+    """Return the square root of ``C (C + ridge I)^-2``.
+
+    Applying this operator to a reconstruction residual yields the static
+    ridge-saturated spectral loss implied by the isotropic decoder theorem.
+    """
+
+    if ridge <= 0:
+        raise ValueError("ridge must be strictly positive")
+    covariance = activations.mT @ activations / activations.shape[0]
+    eigenvalues, eigenvectors = torch.linalg.eigh(covariance.float())
+    weights = eigenvalues.clamp_min(0).sqrt() / (eigenvalues + ridge)
+    return (eigenvectors * weights) @ eigenvectors.mT
 
 
 def sampled_decoder_loss_from_reference(
@@ -62,13 +80,21 @@ class TrainingFleet:
         learning_rate: float,
         device: torch.device,
         whitening: Tensor | None = None,
+        spectral: Tensor | None = None,
         aux_weight: float = 1 / 32,
         dead_after_steps: int = 2_000,
         aux_k: int = 512,
     ) -> None:
         self.specs = specs
         self.device = device
-        self.whitening = None if whitening is None else whitening.to(device)
+        self.static_operators = {
+            method: operator.to(device)
+            for method, operator in {
+                "whitening": whitening,
+                "spectral": spectral,
+            }.items()
+            if operator is not None
+        }
         self.aux_weight = aux_weight
         self.dead_after_steps = dead_after_steps
         self.aux_k = aux_k
@@ -156,20 +182,28 @@ class TrainingFleet:
             ) / denominator
             decoder[dpsae_indices] = decoder_values
 
+        static_metric = torch.zeros(len(models), device=self.device)
+        for method, operator in self.static_operators.items():
+            indices = [
+                index for index, spec in enumerate(self.specs) if spec.method == method
+            ]
+            if not indices:
+                continue
+            weighted_residual = torch.matmul(residual[indices], operator)
+            weighted_original = activations @ operator
+            static_metric[indices] = weighted_residual.square().sum(dim=(1, 2)) / (
+                weighted_original.square().sum().clamp_min(1e-12)
+            )
+
         primary = []
         auxiliary = []
         for index, (spec, model) in enumerate(zip(self.specs, models)):
             if spec.method == "dpsae":
                 primary.append(mse[index] + spec.decoder_weight * decoder[index])
-            elif spec.method == "whitening":
-                if self.whitening is None:
-                    raise RuntimeError("whitening method requires an operator")
-                weighted_residual = residual[index] @ self.whitening
-                weighted_original = activations @ self.whitening
-                whitened_nmse = (
-                    weighted_residual.square().sum() / weighted_original.square().sum()
-                )
-                primary.append(mse[index] + whitened_nmse)
+            elif spec.method in {"whitening", "spectral"}:
+                if spec.method not in self.static_operators:
+                    raise RuntimeError(f"{spec.method} method requires an operator")
+                primary.append(mse[index] + spec.loss_weight * static_metric[index])
             else:
                 primary.append(mse[index])
 
@@ -214,6 +248,7 @@ class TrainingFleet:
                 "loss": float(losses[index].detach()),
                 "nmse": float(mse[index].detach()),
                 "decoder": float(decoder[index].detach()),
+                "static": float(static_metric[index].detach()),
                 "aux": float(auxiliary_tensor[index].detach()),
                 "l0": float((code[index] != 0).sum(dim=1).float().mean()),
                 "dead": int((step - model.last_active_step >= self.dead_after_steps).sum()),

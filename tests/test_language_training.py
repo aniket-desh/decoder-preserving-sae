@@ -4,6 +4,7 @@ from dpsae.language_training import (
     SAETrainSpec,
     TrainingFleet,
     sampled_decoder_loss_from_reference,
+    spectral_surrogate_operator,
     whitening_operator,
 )
 
@@ -28,11 +29,23 @@ def test_reference_decoder_loss_has_reconstruction_gradient():
     assert torch.isfinite(reconstructed.grad).all()
 
 
+def test_spectral_surrogate_operator_has_theoretical_eigenweights():
+    scales = torch.tensor([0.5, 1.0, 2.0])
+    x = torch.eye(3).repeat(128, 1) * scales
+    ridge = 0.2
+    operator = spectral_surrogate_operator(x, ridge=ridge)
+    covariance = x.mT @ x / len(x)
+    expected = covariance.diag().sqrt() / (covariance.diag() + ridge)
+    torch.testing.assert_close(operator.diag(), expected)
+    torch.testing.assert_close(operator - torch.diag(operator.diag()), torch.zeros(3, 3))
+
+
 def test_training_fleet_updates_matched_models():
     specs = [
         SAETrainSpec("mse_s0", "mse", 0, 2),
         SAETrainSpec("dpsae_s0", "dpsae", 0, 2, decoder_weight=0.5),
         SAETrainSpec("whitening_s0", "whitening", 0, 2),
+        SAETrainSpec("spectral_s0", "spectral", 0, 2, loss_weight=0.5),
     ]
     x = torch.randn(16, 6)
     fleet = TrainingFleet(
@@ -42,6 +55,7 @@ def test_training_fleet_updates_matched_models():
         learning_rate=1e-3,
         device=torch.device("cpu"),
         whitening=whitening_operator(torch.randn(128, 6)),
+        spectral=spectral_surrogate_operator(torch.randn(128, 6), ridge=0.2),
         dead_after_steps=100,
     )
     metrics = fleet.train_batch(
@@ -49,3 +63,4 @@ def test_training_fleet_updates_matched_models():
     )
     assert set(metrics) == {spec.name for spec in specs}
     assert all(value["l0"] == 2 for value in metrics.values())
+    assert metrics["spectral_s0"]["static"] > 0
