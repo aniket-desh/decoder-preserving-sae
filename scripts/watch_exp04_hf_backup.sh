@@ -8,7 +8,12 @@ INTERVAL_SECONDS="${4:-300}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 while true; do
-  "$SCRIPT_DIR/backup_exp04_hf.sh" "$MODEL_REPO" "$DATASET_REPO" "$ARTIFACT_DIR"
+  if ! "$SCRIPT_DIR/backup_exp04_hf.sh" \
+    "$MODEL_REPO" "$DATASET_REPO" "$ARTIFACT_DIR"; then
+    echo "backup attempt failed; retrying in ${INTERVAL_SECONDS}s" >&2
+    sleep "$INTERVAL_SECONDS"
+    continue
+  fi
   if [[ -f "$ARTIFACT_DIR/analysis.json" && -f "$ARTIFACT_DIR/figures/exp04_headline.png" ]]; then
     exit 0
   fi
