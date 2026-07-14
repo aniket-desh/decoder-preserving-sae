@@ -333,7 +333,11 @@ def _dense_target_metric(
 
 
 def _selected_row(rows: list[dict], count: int) -> dict:
-    matches = [row for row in rows if row["features"] == count]
+    matches = [
+        row
+        for row in rows
+        if row.get("feature_count", row.get("features")) == count
+    ]
     if len(matches) != 1:
         raise ValueError(f"expected one row for frozen feature count {count}")
     return matches[0]

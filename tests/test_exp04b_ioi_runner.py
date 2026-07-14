@@ -71,7 +71,8 @@ def test_paired_test_summary_uses_frozen_count_and_per_example_pairs():
                 ],
                 "exposure_curve": [
                     {
-                        "features": 2,
+                        "features": [4, 9],
+                        "feature_count": 2,
                         "summed_active_frequency": 1.0,
                         "summed_activation_mass": 1.0,
                         "summed_decoded_energy": 1.0,
