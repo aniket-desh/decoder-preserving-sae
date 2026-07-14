@@ -48,48 +48,61 @@ def selected_row(rows: list[dict], count: int) -> dict:
     return next(row for row in rows if row["features"] == count)
 
 
-def plot_natural(artifact: Path) -> None:
-    result = read_json(artifact / "natural_evaluation_source.json")
-    apply_paper_style()
-    fig, axes = plt.subplots(1, 2, figsize=(6.8, 2.75))
+def sparsity_from_name(name: str) -> int:
+    for value in (16, 64):
+        if f"_k{value}_" in name:
+            return value
+    return 32
 
-    for name, model in result["models"].items():
+
+def plot_natural(artifact: Path) -> None:
+    source = read_json(artifact / "natural_evaluation_source.json")
+    confirmation = read_json(artifact / "natural_evaluation_baseline.json")
+    apply_paper_style()
+    fig, axes = plt.subplots(1, 3, figsize=(9.8, 2.75))
+
+    for model in confirmation["models"].values():
         method = model_method(model)
-        if method not in {"mse", "isotropic", "whitened"}:
-            continue
-        k = int(model["spec"]["k"])
         axes[0].scatter(
             model["sampled_primary"]["nmse"],
             model["exact_identity_primary"]["decoder_distortion"],
-            s={16: 18, 32: 30, 64: 44}[k],
+            s=26,
             marker=MARKERS[method],
             color=COLORS[method],
             alpha=0.72,
             label=LABELS[method],
         )
-    for k in (16, 32, 64):
-        points = [
-            (
-                model["sampled_primary"]["nmse"],
-                model["exact_identity_primary"]["decoder_distortion"],
-            )
-            for model in result["models"].values()
-            if model["spec"]["method"] == "dpsae" and int(model["spec"]["k"]) == k
-        ]
-        axes[0].annotate(
-            f"k={k}",
-            np.median(points, axis=0),
-            xytext=(5, -10),
-            textcoords="offset points",
-            color=COLORS["isotropic"],
-            fontsize=7,
-        )
-    axes[0].set_title("Fresh natural-text confirmation")
+    axes[0].set_title("Held-out confirmation (k=32)")
     axes[0].set_xlabel("Reconstruction NMSE")
     axes[0].set_ylabel("Exact decoder distortion")
     clean_axis(axes[0], xlog=True, ylog=True)
 
-    exact = result["exact_identity_audit"]
+    by_seed: dict[int, dict[int, float]] = {}
+    for row in source["paired_reductions"]:
+        if row["method"] != "dpsae":
+            continue
+        by_seed.setdefault(int(row["seed"]), {})[
+            sparsity_from_name(row["candidate"])
+        ] = 100 * row["exact_identity_reduction"]["estimate"]
+    ks = (16, 32, 64)
+    trajectories = [[by_seed[seed][k] for k in ks] for seed in sorted(by_seed)]
+    for values in trajectories:
+        axes[1].plot(ks, values, color=COLORS["isotropic"], alpha=0.22)
+    axes[1].plot(
+        ks,
+        np.median(trajectories, axis=0),
+        color=COLORS["isotropic"],
+        marker=MARKERS["isotropic"],
+        linewidth=2,
+    )
+    axes[1].axhline(0, color=COLORS["theory"], linestyle=":", linewidth=1)
+    axes[1].set_xticks(ks)
+    axes[1].set_title("Sparsity robustness")
+    axes[1].set_xlabel("Active features k")
+    axes[1].set_ylabel("DPSAE reduction vs. MSE (%)")
+    clean_axis(axes[1])
+
+    exact = source["exact_identity_audit"]
     values = {
         (row["model"], row["ridge"], row["group_size"], row["grouping"]): row[
             "decoder_distortion"
@@ -115,10 +128,10 @@ def plot_natural(artifact: Path) -> None:
             dpsae = values[(f"dpsae_s{seed}", ridge, size, grouping)]
             seed_values.append(100 * (1 - dpsae / mse))
         trajectories.append(seed_values)
-        axes[1].plot(
+        axes[2].plot(
             range(len(settings)), seed_values, color=COLORS["isotropic"], alpha=0.22
         )
-    axes[1].plot(
+    axes[2].plot(
         range(len(settings)),
         np.median(trajectories, axis=0),
         color=COLORS["isotropic"],
@@ -126,21 +139,25 @@ def plot_natural(artifact: Path) -> None:
         linewidth=2,
     )
     labels = [
-        f"n={size}" if axis == "group_size" else grouping.replace("document_", "doc-")
-        if axis == "grouping"
-        else f"ridge={ridge:.2g}"
+        (
+            f"n={size}"
+            if axis == "group_size"
+            else grouping.replace("document_", "doc-")
+            if axis == "grouping"
+            else f"ridge={ridge:.2g}"
+        )
         for axis, ridge, size, grouping in settings
     ]
-    axes[1].axhline(0, color=COLORS["theory"], linestyle=":", linewidth=1)
-    axes[1].set_xticks(range(len(settings)), labels, rotation=35, ha="right")
-    axes[1].set_title("Geometry audit at k=32")
-    axes[1].set_ylabel("DPSAE reduction vs. MSE (%)")
-    clean_axis(axes[1])
+    axes[2].axhline(0, color=COLORS["theory"], linestyle=":", linewidth=1)
+    axes[2].set_xticks(range(len(settings)), labels, rotation=35, ha="right")
+    axes[2].set_title("Geometry robustness (k=32)")
+    axes[2].set_ylabel("DPSAE reduction vs. MSE (%)")
+    clean_axis(axes[2])
 
     handles, labels = axes[0].get_legend_handles_labels()
     unique = dict(zip(labels, handles))
-    fig.legend(unique.values(), unique.keys(), loc="upper center", ncol=3, frameon=False)
-    fig.subplots_adjust(top=0.78, bottom=0.27, wspace=0.38)
+    fig.legend(unique.values(), unique.keys(), loc="upper center", ncol=4, frameon=False)
+    fig.subplots_adjust(top=0.78, bottom=0.29, wspace=0.42)
     savefig(fig, artifact / "figures" / "exp04b_natural_confirmation")
     plt.close(fig)
 
@@ -151,38 +168,40 @@ def plot_ioi(artifact: Path) -> None:
     count = int(result["feature_count_selection"]["selection"]["feature_count"])
     apply_paper_style()
     fig, axes = plt.subplots(1, 2, figsize=(6.8, 2.75))
-    methods = ("mse", "isotropic", "whitened", "spectral")
-    for method in methods:
-        matches = [value for value in models.values() if model_method(value) == method]
-        if not matches:
-            continue
-        curves = []
-        for model in matches:
-            ioi = model["duplicate_state"]["ioi_zero_curve"]
-            natural = model["duplicate_state"]["natural_zero_curve"]
-            x = [row["collateral_kl"] for row in natural]
-            y = [row["ioi_effect"] for row in ioi]
-            curves.append((x, y))
-            axes[0].plot(x, y, color=COLORS[method], alpha=0.2, linewidth=0.8)
-        axes[0].plot(
-            np.median([curve[0] for curve in curves], axis=0),
-            np.median([curve[1] for curve in curves], axis=0),
+    for row in result["paired_test_summary"]:
+        method = style_method(row["method"])
+        effect = row["ioi_effect_difference"]
+        kl = row["natural_kl_difference"]
+        x = kl["paired_difference"]
+        y = effect["paired_difference"]
+        axes[0].errorbar(
+            x,
+            y,
+            xerr=[[x - kl["ci_low"]], [kl["ci_high"] - x]],
+            yerr=[[y - effect["ci_low"]], [effect["ci_high"] - y]],
             color=COLORS[method],
             marker=MARKERS[method],
-            linestyle=LINESTYLES[method],
-            linewidth=2,
+            alpha=0.72,
+            capsize=2,
+            linestyle="none",
             label=LABELS[method],
         )
-    axes[0].set_title("Matched zero-ablation frontier")
-    axes[0].set_xlabel("Natural-text collateral KL")
-    axes[0].set_ylabel("IOI logit-difference effect")
+        axes[0].annotate(
+            f"s{row['seed']}",
+            (x, y),
+            xytext=(4, 3),
+            textcoords="offset points",
+            color=COLORS[method],
+            fontsize=6,
+        )
+    axes[0].axhline(0, color=COLORS["theory"], linestyle=":", linewidth=1)
+    axes[0].axvline(0, color=COLORS["theory"], linestyle=":", linewidth=1)
+    axes[0].set_title(f"Frozen paired causal test (m={count})")
+    axes[0].set_xlabel("Δ natural-text collateral KL\n(left is better)")
+    axes[0].set_ylabel("Δ IOI ablation effect\n(up is better)")
     clean_axis(axes[0])
 
-    active_methods = [
-        method
-        for method in methods
-        if any(model_method(value) == method for value in models.values())
-    ]
+    active_methods = ("mse", "isotropic", "whitened", "spectral")
     for index, method in enumerate(active_methods):
         matches = [value for value in models.values() if model_method(value) == method]
         if not matches:
@@ -201,23 +220,29 @@ def plot_ioi(artifact: Path) -> None:
             color=COLORS[method],
             linewidth=2,
         )
-    dense = [value["continuous_target"]["original_dense_test"]["r2"] for value in models.values()]
-    axes[1].axhline(
-        np.median(dense), color=COLORS["theory"], linestyle=":", label="Dense original"
+    dense = np.median(
+        [value["continuous_target"]["original_dense_test"]["r2"] for value in models.values()]
     )
+    dense_index = len(active_methods)
+    axes[1].scatter(dense_index, dense, color=COLORS["theory"], marker="x")
+    axes[1].axhline(0, color=COLORS["theory"], linestyle=":", linewidth=1)
     axes[1].set_xticks(
-        range(len(active_methods)),
-        [LABELS[method].replace("MSE + ", "") for method in active_methods],
+        range(len(active_methods) + 1),
+        [LABELS[method].replace("MSE + ", "") for method in active_methods]
+        + ["Dense original"],
         rotation=25,
         ha="right",
     )
-    axes[1].set_title(f"Harder target at frozen m={count}")
+    axes[1].set_title("Continuous-target diagnostic (failed)")
     axes[1].set_ylabel("Final correct-minus-subject R²")
     clean_axis(axes[1])
 
     handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", ncol=min(4, len(handles)), frameon=False)
-    fig.subplots_adjust(top=0.78, bottom=0.27, wspace=0.38)
+    unique = dict(zip(labels, handles))
+    fig.legend(
+        unique.values(), unique.keys(), loc="upper center", ncol=3, frameon=False
+    )
+    fig.subplots_adjust(top=0.78, bottom=0.31, wspace=0.42)
     savefig(fig, artifact / "figures" / "exp04b_ioi_confirmation")
     plt.close(fig)
 
