@@ -17,7 +17,12 @@ The first controlled comparison is:
 - `src/dpsae/decoder_distance.py` contains the differentiable reference objective.
 - `tests/` checks invariances and basic numerical behavior before model training.
 - `configs/` contains versioned experiment configurations.
-- `scripts/` contains executable research and validation entry points.
+- `experiments/` contains the canonical scientific entry points.
+- `scripts/check.sh` runs the shared validation suite, while `scripts/audit_exp04_results.py` audits Experiment 4 artifacts.
+
+## Collaboration workflow
+
+`main` is the portable shared base: source, tests, versioned configurations, and canonical experiments only. Create a personal branch before adding exploratory analyses or machine-specific orchestration. Keep checkpoints, generated results, credentials, local paths, backup daemons, and cluster or RunPod launchers off `main`.
 
 ## Local setup
 
