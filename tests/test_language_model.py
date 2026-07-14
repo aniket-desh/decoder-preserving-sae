@@ -1,11 +1,25 @@
+from types import SimpleNamespace
+
 import torch
 
 from dpsae.language_model import (
     ActivationStats,
     _replace_block_output,
+    _transformer_blocks,
     answer_logit_difference,
     estimate_activation_stats,
 )
+
+
+def test_transformer_blocks_supports_gpt2_and_gpt_neox_layouts():
+    gpt2_blocks = [object(), object()]
+    neox_blocks = [object(), object(), object()]
+    assert _transformer_blocks(
+        SimpleNamespace(transformer=SimpleNamespace(h=gpt2_blocks))
+    ) is gpt2_blocks
+    assert _transformer_blocks(
+        SimpleNamespace(gpt_neox=SimpleNamespace(layers=neox_blocks))
+    ) is neox_blocks
 
 
 def test_activation_stats_round_trip():

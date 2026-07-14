@@ -237,7 +237,11 @@ def _tail_batcher(
 
 @torch.inference_mode()
 def cache_natural(
-    config: Mapping[str, Any], paths: ExperimentPaths, device: torch.device
+    config: Mapping[str, Any],
+    paths: ExperimentPaths,
+    device: torch.device,
+    *,
+    splits: Sequence[str] = ("selection", "test"),
 ) -> None:
     if not (paths.tail_tokens.exists() and paths.source_calibration.exists()):
         raise FileNotFoundError("tail tokens and source calibration are required")
@@ -247,10 +251,16 @@ def cache_natural(
     target_tokens = int(config["natural_text"]["activation_tokens"])
     sequence_length = int(config["source"]["training"]["sequence_length"])
     target_sequences = target_tokens // sequence_length
-    for split, output in (
-        ("selection", paths.natural_selection),
-        ("test", paths.natural_test),
-    ):
+    if not splits or any(split not in {"selection", "test"} for split in splits):
+        raise ValueError("natural cache splits must be selection and/or test")
+    if len(set(splits)) != len(splits):
+        raise ValueError("natural cache splits must be unique")
+    outputs = {
+        "selection": paths.natural_selection,
+        "test": paths.natural_test,
+    }
+    for split in splits:
+        output = outputs[split]
         if output.exists():
             payload = torch.load(output, map_location="cpu", weights_only=False)
             if (
@@ -951,11 +961,12 @@ def run_stage(
     device: torch.device,
     *,
     fleet: str | None = None,
+    natural_splits: Sequence[str] = ("selection", "test"),
 ) -> None:
     if stage == "prepare-tail":
         prepare_tail(config, paths, device)
     elif stage == "cache-natural":
-        cache_natural(config, paths, device)
+        cache_natural(config, paths, device, splits=natural_splits)
     elif stage == "calibrate-static":
         calibrate_static(config, paths, device)
     elif stage in {"baseline-screen", "baseline-confirm"}:
@@ -978,6 +989,12 @@ def main() -> None:
     )
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--fleet", choices=("source", "baseline", "all"), default="all")
+    parser.add_argument(
+        "--natural-split",
+        choices=("selection", "test", "all"),
+        default="all",
+        help="limit cache-natural so sealed test contexts need not be opened early",
+    )
     args = parser.parse_args()
     config = load_config(args.config)
     paths = experiment_paths(config)
@@ -987,9 +1004,21 @@ def main() -> None:
     torch.set_float32_matmul_precision("high")
     if device.type == "cuda":
         torch.backends.cuda.matmul.allow_tf32 = True
+    natural_splits = (
+        ("selection", "test")
+        if args.natural_split == "all"
+        else (args.natural_split,)
+    )
     for stage, fleet in stage_sequence(args.stage, fleet=args.fleet):
         print(f"=== {stage}{'' if fleet is None else f' ({fleet})'} ===", flush=True)
-        run_stage(stage, config, paths, device, fleet=fleet)
+        run_stage(
+            stage,
+            config,
+            paths,
+            device,
+            fleet=fleet,
+            natural_splits=natural_splits,
+        )
 
 
 if __name__ == "__main__":

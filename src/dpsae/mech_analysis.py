@@ -144,12 +144,16 @@ def collect_state_activations(
 
 def load_sae(payload: dict, *, input_dim: int, device: torch.device) -> BatchTopKSAE:
     spec = payload["spec"]
+    sparsity_config = payload.get("sparsity_config", {})
     dictionary_size = payload["state_dict"]["encoder_bias"].numel()
     model = BatchTopKSAE(
         input_dim,
         dictionary_size,
         spec["k"],
         seed=spec["seed"],
+        sparsity_mode=payload.get("sparsity_mode", "batch_topk"),
+        jump_relu_init_threshold=float(sparsity_config.get("init_threshold", 0.001)),
+        jump_relu_bandwidth=float(sparsity_config.get("bandwidth", 0.001)),
     ).to(device)
     model.load_state_dict(payload["state_dict"])
     model.eval()

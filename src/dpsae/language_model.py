@@ -1,4 +1,4 @@
-"""GPT-2 activation capture and SAE insertion utilities."""
+"""Causal-LM activation capture and SAE insertion utilities."""
 
 from __future__ import annotations
 
@@ -44,11 +44,27 @@ def _replace_block_output(output, hidden: Tensor):
     return hidden
 
 
+def _transformer_blocks(model):
+    """Return the residual blocks for the supported Hugging Face LM families."""
+
+    transformer = getattr(model, "transformer", None)
+    if transformer is not None and hasattr(transformer, "h"):
+        return transformer.h
+    gpt_neox = getattr(model, "gpt_neox", None)
+    if gpt_neox is not None and hasattr(gpt_neox, "layers"):
+        return gpt_neox.layers
+    raise TypeError(
+        "unsupported causal LM: expected GPT-2 transformer.h or GPT-NeoX "
+        "gpt_neox.layers"
+    )
+
+
 class GPT2ActivationModel:
-    """Frozen causal LM with a single residual-stream capture/insertion site."""
+    """Frozen GPT-2/GPT-NeoX LM with one residual capture/insertion site."""
 
     def __init__(self, model, tokenizer, *, layer: int, device: torch.device) -> None:
-        if layer < 1 or layer > len(model.transformer.h):
+        self.blocks = _transformer_blocks(model)
+        if layer < 1 or layer > len(self.blocks):
             raise ValueError("layer must use one-based transformer block numbering")
         self.model = model
         self.tokenizer = tokenizer
@@ -107,7 +123,7 @@ class GPT2ActivationModel:
         mask = None if attention_mask is None else attention_mask.to(self.device)
         handle = None
         if replacement is not None:
-            block = self.model.transformer.h[self.layer - 1]
+            block = self.blocks[self.layer - 1]
 
             def hook(_module, _inputs, output):
                 hidden = output[0] if isinstance(output, tuple) else output
