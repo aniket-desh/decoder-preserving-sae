@@ -75,7 +75,11 @@ def plot_natural(artifact: Path) -> None:
     axes[0].set_title("Held-out confirmation (k=32)")
     axes[0].set_xlabel("Reconstruction NMSE")
     axes[0].set_ylabel("Exact decoder distortion")
-    clean_axis(axes[0], xlog=True, ylog=True)
+    axes[0].set_xlim(0.0230, 0.0254)
+    axes[0].set_ylim(0.0285, 0.0465)
+    axes[0].set_xticks((0.023, 0.024, 0.025))
+    axes[0].set_yticks((0.03, 0.04))
+    clean_axis(axes[0])
 
     by_seed: dict[int, dict[int, float]] = {}
     for row in source["paired_reductions"]:
