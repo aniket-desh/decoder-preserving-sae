@@ -9,6 +9,7 @@ MARKERS="$ARTIFACT_DIR/.hf_backup"
 if [[ -z "${HF_HOME:-}" && -d /workspace/huggingface ]]; then
   export HF_HOME=/workspace/huggingface
 fi
+export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
 
 mkdir -p "$MARKERS"
 hf auth whoami >/dev/null
