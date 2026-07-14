@@ -9,7 +9,7 @@ export TOKENIZERS_PARALLELISM=true
 export PYTHONDONTWRITEBYTECODE=1
 export PYTHONPATH=src
 PYTHON=/workspace/decoder-preserving-sae/.venv/bin/python
-OUTPUT=artifacts/joint_audit_20260714
+OUTPUT=artifacts/joint_audit_20260714_corrected
 LOGS="$OUTPUT/logs"
 mkdir -p "$LOGS"
 
@@ -18,6 +18,7 @@ while tmux has-session -t dpsae-jumprelu-matched 2>/dev/null; do
 done
 
 "$PYTHON" -u experiments/exp07_advantage_spectrum.py all \
+  --output "$OUTPUT" \
   --device cuda:0 \
   --gpu-memory-fraction 0.25 \
   --minimum-free-gib 20 \
@@ -36,6 +37,7 @@ for MODEL in "${MODELS[@]}"; do
     continue
   fi
   "$PYTHON" -u experiments/exp07_gradient_fidelity.py run \
+    --output "$OUTPUT" \
     --model-name "$MODEL" \
     --device cuda:0 \
     --gpu-memory-fraction 0.25 \
@@ -44,4 +46,5 @@ for MODEL in "${MODELS[@]}"; do
 done
 
 "$PYTHON" -u experiments/exp07_gradient_fidelity.py summarize \
+  --output "$OUTPUT" \
   > "$LOGS/gradient_fidelity_summary.log" 2>&1

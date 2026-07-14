@@ -1,6 +1,12 @@
 import torch
 
 from experiments.exp07_advantage_spectrum import shared_direction_scores
+from experiments.exp07_gradient_fidelity import (
+    block_bootstrap_gradient_summary,
+    block_gradient_statistics,
+    expected_gradient_metrics_from_weights,
+    hierarchical_expected_gradient_summary,
+)
 from dpsae.decoder_distance import batched_ridge_predict
 from dpsae.language_training import sampled_decoder_loss_from_reference
 from dpsae.task_fidelity import (
@@ -64,6 +70,77 @@ def test_shared_direction_scores_stay_in_sample_coordinates():
     )
     assert torch.allclose(scores, direct)
     assert not torch.equal(scores[0], scores[1])
+
+
+def test_block_statistics_recover_u_statistical_gradient_bias():
+    exact = torch.tensor([1.0, -0.5], dtype=torch.float64)
+    sampled = torch.tensor(
+        [[1.2, -0.4], [0.9, -0.7], [1.1, -0.3], [1.0, -0.6]],
+        dtype=torch.float64,
+    )
+    fixed = torch.tensor(
+        [[1.1, -0.5], [0.9, -0.6], [1.0, -0.4], [1.0, -0.5]],
+        dtype=torch.float64,
+    )
+    statistics = block_gradient_statistics(sampled, fixed, exact)
+    weights = torch.ones(1, len(sampled), dtype=torch.float64)
+    sampled_metrics = expected_gradient_metrics_from_weights(
+        statistics,
+        weights,
+        estimator="sampled",
+    )
+    paired_metrics = expected_gradient_metrics_from_weights(
+        statistics,
+        weights,
+        estimator="sampled_minus_fixed",
+    )
+
+    residual = sampled - exact
+    paired = sampled - fixed
+    off_diagonal_residual = residual @ residual.mT
+    off_diagonal_paired = paired @ paired.mT
+    expected_bias_squared = (
+        off_diagonal_residual.sum() - off_diagonal_residual.diagonal().sum()
+    ) / (len(sampled) * (len(sampled) - 1) * exact.square().sum())
+    expected_paired_squared = (
+        off_diagonal_paired.sum() - off_diagonal_paired.diagonal().sum()
+    ) / (len(sampled) * (len(sampled) - 1) * exact.square().sum())
+    assert torch.allclose(
+        sampled_metrics["relative_bias_squared_unclamped"],
+        expected_bias_squared.reshape(1),
+    )
+    assert torch.allclose(
+        paired_metrics["relative_bias_squared_unclamped"],
+        expected_paired_squared.reshape(1),
+    )
+    bootstrap = block_bootstrap_gradient_summary(statistics, samples=64, seed=11)
+    assert set(bootstrap) == {"sampled", "fixed", "sampled_minus_fixed"}
+    assert len(bootstrap["sampled"]["cosine"]["bootstrap95"]) == 2
+
+    raw = {
+        str(batch): {
+            "16": {
+                "row_gram": {"bootstrap_sufficient_statistics": statistics}
+            }
+        }
+        for batch in range(2)
+    }
+    hierarchical = hierarchical_expected_gradient_summary(
+        raw,
+        {
+            "bootstrap_samples": 64,
+            "batches": 2,
+            "bootstrap_blocks": 4,
+            "bootstrap_seed": 13,
+        },
+        probes=16,
+        space="row_gram",
+    )
+    assert len(
+        hierarchical["median_expected_relative_bias"][
+            "hierarchical_bootstrap95"
+        ]
+    ) == 2
 
 
 def test_fixed_radius_targets_have_training_norm():
