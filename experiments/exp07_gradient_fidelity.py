@@ -284,11 +284,12 @@ def run_model(
                     covariances[count],
                     probes=count,
                 )
-                fixed_gram, fixed_reconstruction, _ = sampled_relative_gradients(
-                    factors,
-                    covariances[count],
-                    probes=count,
-                    fixed_denominator=True,
+                fixed_scale = denominator / (
+                    count * factors["source_energy"].clamp_min(1e-12)
+                )
+                fixed_gram = sampled_gram * fixed_scale[:, None, None, None]
+                fixed_reconstruction = (
+                    sampled_reconstruction * fixed_scale[:, None, None, None]
                 )
                 total_denominator_clamp_hits += int(
                     (denominator <= float(settings["denominator_clamp"])).sum()

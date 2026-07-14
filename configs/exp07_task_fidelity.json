@@ -42,7 +42,7 @@
     "ridge": 1.6049035191535947,
     "probe_counts": [1, 2, 4, 8, 16, 32, 64],
     "banks": 256,
-    "bank_chunk": 4,
+    "bank_chunk": 8,
     "probe_seed": 2027071421,
     "target_rms_clamp": 1e-6,
     "denominator_clamp": 1e-12,
