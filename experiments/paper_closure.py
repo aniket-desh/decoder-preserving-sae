@@ -224,6 +224,22 @@ def frontier_train_screen(args: argparse.Namespace) -> None:
         source["model_name"], layer=int(source["layer"]), device=device
     )
     stats = ActivationStats.from_state_dict(calibration["activation_stats"], device)
+    method_threshold_multipliers = None
+    supplied_method_multipliers = (
+        args.jump_relu_threshold_lr_multiplier_mse,
+        args.jump_relu_threshold_lr_multiplier_dpsae,
+    )
+    if any(value is not None for value in supplied_method_multipliers):
+        if args.sparsity_mode != "jump_relu" or any(
+            value is None for value in supplied_method_multipliers
+        ):
+            raise ValueError(
+                "method-specific threshold multipliers require JumpReLU and both methods"
+            )
+        method_threshold_multipliers = {
+            "mse": args.jump_relu_threshold_lr_multiplier_mse,
+            "dpsae": args.jump_relu_threshold_lr_multiplier_dpsae,
+        }
     fleet = TrainingFleet(
         specs,
         input_dim=int(lm.model.config.n_embd),
@@ -239,6 +255,7 @@ def frontier_train_screen(args: argparse.Namespace) -> None:
         jump_relu_bandwidth=args.jump_relu_bandwidth,
         jump_relu_sparsity_weight=args.jump_relu_sparsity_weight,
         jump_relu_threshold_lr_multiplier=args.jump_relu_threshold_lr_multiplier,
+        jump_relu_threshold_lr_multipliers_by_method=method_threshold_multipliers,
     )
     source_range = TokenRange(
         *source["corpus"]["ranges"][args.source_range_name]
@@ -669,6 +686,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--jump-relu-threshold-lr-multiplier", type=float, default=32.0
     )
+    parser.add_argument("--jump-relu-threshold-lr-multiplier-mse", type=float)
+    parser.add_argument("--jump-relu-threshold-lr-multiplier-dpsae", type=float)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--minimum-free-gib", type=float, default=20.0)
     parser.add_argument("--gpu-memory-fraction", type=float, default=0.08)

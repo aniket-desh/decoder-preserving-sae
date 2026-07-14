@@ -77,3 +77,5 @@ def test_frontier_runner_dispatches_jump_relu_with_auditable_defaults(monkeypatc
     assert args.jump_relu_bandwidth == 0.001
     assert args.jump_relu_sparsity_weight == 1.0
     assert args.jump_relu_threshold_lr_multiplier == 32.0
+    assert args.jump_relu_threshold_lr_multiplier_mse is None
+    assert args.jump_relu_threshold_lr_multiplier_dpsae is None

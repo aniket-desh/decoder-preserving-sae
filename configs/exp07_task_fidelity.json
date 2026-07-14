@@ -1,0 +1,108 @@
+{
+  "experiment": "exp07_task_fidelity",
+  "output": "artifacts/joint_audit_20260714",
+  "counterexample": {
+    "ridge": 0.5,
+    "delta": 0.1,
+    "equal_a": 1.0,
+    "unequal_a": 1.0,
+    "unequal_b": 2.0
+  },
+  "advantage_spectrum": {
+    "models": "artifacts/paper_closure/confirmation_common/models.pt",
+    "cache": "artifacts/paper_closure/natural_selection.pt",
+    "confirmation_template": "artifacts/paper_closure/confirmation_seed{seed}.json",
+    "seeds": [0, 1, 2],
+    "baseline_template": "mse_s{seed}",
+    "candidate_template": "dpsae_w0.03125_s{seed}",
+    "exact_tokens": 16384,
+    "group_size": 128,
+    "ridge": 1.6049035191535947,
+    "reconstruction_batch_tokens": 4096,
+    "random_directions_per_group": 4096,
+    "random_direction_seed": 2027071411,
+    "maximum_symmetry_residual": 1e-12,
+    "minimum_numerical_tolerance": 1e-12,
+    "roundoff_multiplier": 100.0,
+    "material_fraction_of_baseline_average_error": 0.05,
+    "group_trace_relative_tolerance": 1e-11,
+    "sum_trace_relative_tolerance": 1e-10,
+    "stored_fp32_relative_tolerance": 1e-4,
+    "eigenvalue_bound_tolerance": 1e-10
+  },
+  "gradient_fidelity": {
+    "models": "artifacts/paper_closure/confirmation_common/models.pt",
+    "cache": "artifacts/paper_closure/natural_selection.pt",
+    "seeds": [0, 1, 2],
+    "baseline_template": "mse_s{seed}",
+    "candidate_template": "dpsae_w0.03125_s{seed}",
+    "batches": 12,
+    "tokens_per_batch": 2048,
+    "group_size": 128,
+    "ridge": 1.6049035191535947,
+    "probe_counts": [1, 2, 4, 8, 16, 32, 64],
+    "banks": 256,
+    "bank_chunk": 4,
+    "probe_seed": 2027071421,
+    "target_rms_clamp": 1e-6,
+    "denominator_clamp": 1e-12,
+    "autograd_model": "dpsae_w0.03125_s0",
+    "autograd_batch": 0,
+    "autograd_probes": 16,
+    "gates": {
+      "maximum_median_denominator_cv": 0.10,
+      "maximum_batch_p90_denominator_cv": 0.15,
+      "minimum_median_mean_gradient_cosine": 0.99,
+      "minimum_batch_p10_mean_gradient_cosine": 0.95,
+      "minimum_median_norm_ratio": 0.95,
+      "maximum_median_norm_ratio": 1.05,
+      "maximum_median_relative_mean_bias": 0.05,
+      "maximum_batch_p90_relative_mean_bias": 0.10,
+      "minimum_positive_dot_fraction": 0.95,
+      "maximum_fixed_denominator_mean_error": 0.02,
+      "minimum_rmse_log_slope": -0.65,
+      "maximum_rmse_log_slope": -0.35,
+      "maximum_autograd_relative_error": 0.001,
+      "minimum_autograd_cosine": 0.9999
+    }
+  },
+  "jump_relu_calibration": {
+    "cache": "artifacts/paper_closure/natural_selection.pt",
+    "grid": [
+      {
+        "multiplier": 13.0,
+        "models": "artifacts/paper_closure/architecture_jump_relu_integration_tlr13p0/models.pt"
+      },
+      {
+        "multiplier": 14.0,
+        "models": "artifacts/paper_closure/architecture_jump_relu_integration_tlr14p0/models.pt"
+      },
+      {
+        "multiplier": 15.0,
+        "models": "artifacts/paper_closure/architecture_jump_relu_integration_tlr15p0/models.pt"
+      },
+      {
+        "multiplier": 16.0,
+        "models": "artifacts/paper_closure/architecture_jump_relu_integration_tlr16p0/models.pt"
+      },
+      {
+        "multiplier": 17.0,
+        "models": "artifacts/joint_audit_20260714/jumprelu_tlr17p0/models.pt"
+      }
+    ],
+    "target_l0": 32.0,
+    "accepted_l0_interval": [30.4, 33.6],
+    "maximum_inter_method_l0_gap": 1.6,
+    "evaluation_batch_tokens": 2048,
+    "bootstrap_samples": 10000,
+    "bootstrap_seed": 2027071431,
+    "confirmation_tokens": 2000000,
+    "confirmation_source_range": "confirmation",
+    "confirmation_data_seed": 1329472341,
+    "confirmation_probe_seed_base": 1794246311,
+    "screen_tokens": 25000000,
+    "screen_source_range": "screen",
+    "screen_data_seed": 20260712,
+    "screen_probe_seed_base": 20260712
+  }
+}

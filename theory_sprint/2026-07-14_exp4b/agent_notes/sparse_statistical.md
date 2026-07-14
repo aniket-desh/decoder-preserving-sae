@@ -776,3 +776,210 @@ M=\frac{61}{89}vv^\top.
 strictly below both eigenmode-selection costs. Thus a noncommuting structured prior can prefer a rotated sample-space direction.
 
 For positive definite noncommuting `Sigma`, relaxing symmetry and ridge-hat attainability turns the problem into a truncated-SVD approximation of `K Sigma^{1/2}`. Mapping that relaxed solution back by `Sigma^{-1/2}` generally produces a nonsymmetric matrix, so it need not be a valid ridge hat. The exact general problem is therefore a constrained weighted low-rank approximation, not a scalar mode-ranking rule or an automatic generalized-eigenvalue formula.
+
+## 11. Strongest finite-probe gradient statement
+
+The clean theorem has to distinguish four objects that are easy to conflate.
+
+1. For unnormalized Gaussian probes, the trace estimator
+   \[
+   \widetilde a_m=\frac1m\sum_{g,j}y_{gj}^\top B_g y_{gj},
+   \qquad y_{gj}\sim N(0,I_n),
+   \]
+   is unbiased for `a=sum_g tr(B_g)`, with
+   \[
+   \operatorname{Var}(\widetilde a_m)
+   =\frac2m\sum_g\operatorname{tr}(B_g^2).
+   \]
+   For a parameter coordinate `theta_k`, set `M_{gk}=partial B_g/partial theta_k`. On a differentiable cell,
+   \[
+   \mathbb E\,\partial_k\widetilde a_m=\partial_k a,
+   \qquad
+   \operatorname{Cov}(\partial_k\widetilde a_m,
+   \partial_l\widetilde a_m)
+   =\frac2m\sum_g\operatorname{tr}(M_{gk}M_{gl}).
+   \]
+   The value variance is controlled by the effective rank of `B_g`; the gradient variance is controlled by the derivative matrices and need not follow the same effective rank.
+
+2. Conditional on the target-normalization clamp being inactive, the implemented probes have fixed radius and the `1/m`-averaged numerator gradient remains unbiased, with covariance
+   \[
+   \operatorname{Cov}(\partial_k\widetilde a_m,
+   \partial_l\widetilde a_m)
+   =\frac{2n}{m(n+2)}\sum_g
+   \left[
+   \operatorname{tr}(M_{gk}M_{gl})
+   -\frac{\operatorname{tr}M_{gk}\operatorname{tr}M_{gl}}n
+   \right].
+   \]
+   Column normalization removes radial noise, so importing the Gaussian covariance formula is conservative in some directions and exact only in special cases. Strictly, the code divides by `max(sample_rms,1e-6)`. Under that exact law, isotropy gives \(\mathbb E[yy^T]=c_nI\) for a scalar \(c_n<1\), so the unnormalized numerator and gradient have expectation \(c_n\) times the trace targets. At `n=128` the difference from one is astronomically small, and an audit can make the fixed-radius formulas exact for its realized banks by requiring zero target-normalization clamp hits.
+
+3. Let
+   \[
+   J_m(\theta)=
+   \mathbb E_Y\left[
+   \frac{Z_m(\theta,Y)}{\max(D_m(Y),\epsilon)}
+   \right],
+   \qquad \epsilon=10^{-12}.
+   \]
+   On any fixed BatchTopK/ReLU active-set cell, and whenever differentiation can pass through the expectation,
+   \[
+   \boxed{
+   \mathbb E_Y\nabla_\theta\widehat R_m(\theta,Y)
+   =\nabla_\theta J_m(\theta).}
+   \]
+   This is the exact unbiasedness statement for the code. Because the source hat and denominator do not depend on SAE parameters,
+   \[
+   \nabla_\theta\widehat R_m
+   =\frac{\nabla_\theta Z_m}{\max(D_m,\epsilon)};
+   \]
+   the `no_grad` block does not alter the mathematical SAE gradient. In general \(\nabla J_m\ne\nabla R_{\rm tr}\), because the same probes create a random inverse denominator correlated with the numerator gradient.
+
+4. If `b=sum_g tr(C_g)>0`, fixed activations and reconstructions give, almost surely as the number of independent probes per group tends to infinity,
+   \[
+   Z_m/m\to c_na,\qquad D_m/m\to c_nb,
+   \qquad \nabla Z_m/m\to c_n\nabla a,
+   \]
+   and therefore
+   \[
+   \boxed{
+   \nabla\widehat R_m\to\nabla R_{\rm tr}
+   =\frac{\nabla a}{b}.}
+   \]
+   The scalar \(c_n\) cancels in the ratio, so this convergence statement covers the exact target-normalization clamp law. Expected convergence additionally needs uniform integrability or a denominator lower-tail condition. The denominator clamp guarantees a finite implemented loss, but it changes the target if it fires; when `b>0`, it is eventually inactive almost surely as `m` grows. Parameter-gradient convergence also requires the checkpoint to remain in a differentiable fixed active-set cell; the frozen reconstruction-space statement does not.
+
+The first-order self-normalization bias can be written explicitly. Let
+
+\[
+v_C=\frac{2n}{n+2}\sum_g
+\left[\operatorname{tr}(C_g^2)-\frac{(\operatorname{tr}C_g)^2}{n}\right]
+\]
+
+and
+
+\[
+c_{M_kC}=\frac{2n}{n+2}\sum_g
+\left[\operatorname{tr}(M_{gk}C_g)
+-\frac{\operatorname{tr}M_{gk}\operatorname{tr}C_g}{n}\right].
+\]
+
+Writing `h_k=sum_g tr(M_gk)`, a denominator-concentrated expansion gives
+
+\[
+\mathbb E[\partial_k\widehat R_m]-\frac{h_k}{b}
+=\frac1m\left[
+\frac{h_k v_C}{b^3}-\frac{c_{M_kC}}{b^2}
+\right]+O(m^{-2}).
+\]
+
+The sign is unrestricted. The two diagonal examples in Section 3 also give both gradient-bias signs when the changed hat eigenvalue is treated as a scalar parameter. In the first example, the expected one-probe objective is `1.25(0.8-q)^2`, versus exact `0.68^{-1}(0.8-q)^2`, so at `q=0.4` the gradient bias is positive. In the second, the expected objective is `5(0.2-q)^2`, versus exact `0.68^{-1}(0.2-q)^2`, so at `q=0` the gradient bias is negative. Thus no finite-`m` theorem can promise even a one-sided gradient bias.
+
+For audit calculations, the reconstruction-space gradients have a closed form. Write `tau=n lambda`, `R_g=(Z_gZ_g^T+tau I)^{-1}`, and `S_g=sum_j y_gj y_gj^T`. Then
+
+\[
+\nabla_{Z_g} Z_m
+=-2\tau R_g(A_gS_g+S_gA_g)R_g Z_g,
+\]
+
+while identity targets give
+
+\[
+\nabla_{Z_g} a
+=-4\tau R_gA_gR_gZ_g.
+\]
+
+These formulas permit a frozen-checkpoint audit without retaining a full SAE parameter graph. They also isolate estimator fidelity from the architecture Jacobian.
+
+## 12. Frozen-checkpoint gradient-fidelity audit
+
+The recommended contract freezes all six final confirmatory checkpoints, MSE and DPSAE for seeds 0--2, then uses the same 12 held-out training-shaped batches for every checkpoint. Reconstruct each 2,048-row batch with the training BatchTopK rule and its exact global `2,048 x k` support budget, not the learned evaluation threshold, then reshape contiguously into `16 x 128` groups. Use the checkpoint's selected ridge and draw 256 independent maximum probe banks per batch. Within each bank, treat `m in {1,2,4,8,16,32,64}` as paired prefixes of the same 64 probes. The closed-form gradients permit streaming over banks, groups, and checkpoints, so no bank-gradient fleet or full autograd graph needs to remain resident. Compute the mathematical reference in FP64, then spot-check the implemented FP32 autograd gradient at `m=16` on at least one batch per checkpoint to separate sampling error from numerical or implementation error.
+
+For every frozen batch, estimate four gradients:
+
+- `g_id`, the exact identity-target gradient of `a/b` in row-Gram space and reconstruction space;
+- `g_m`, the implemented sampled gradient of `Z_m/D_m`;
+- `g_m_fixed`, the control gradient of `Z_m/(m b)`, which is exactly unbiased for `g_id` conditional on zero target-normalization clamp hits and isolates projection noise. For the strict clamped probe law, replace `m b` by `m c_n b`;
+- optionally, the Gaussian unnormalized gradient, which should reproduce the Experiment 3 moment law and acts as an implementation control rather than a model claim.
+
+Report paired estimands rather than treating millions of gradient coordinates as independent observations:
+
+1. `cos(mean_bank g_m, g_id)`, `||mean_bank g_m||/||g_id||`, and `||mean_bank g_m-g_id||/||g_id||` measure mean-gradient direction, scale, and bias.
+2. `sqrt(mean_bank ||g_m-g_id||^2)/||g_id||` and the distribution of per-bank cosines measure stochastic noise seen by SGD.
+3. `Pr(g_m dot g_id>0)` measures whether a sampled decoder step is locally descending for the exact objective.
+4. Denominator coefficient of variation, minimum denominator, and clamp-hit rate diagnose whether the asymptotic expansion applies.
+5. The paired difference between `mean g_m` and `mean g_m_fixed` estimates self-normalization bias; `g_m_fixed` must agree with `g_id` within Monte Carlo uncertainty.
+
+Conditional probe noise should scale as `m^{-1/2}`. Once resolvable above Monte Carlo error, self-normalization bias should scale as `m^{-1}`; with comparable independent groups, both constants benefit from the aggregate group count. Fit slopes on log scale but do not claim the `-1` bias law if the estimated bias is smaller than its confidence interval. Construct Monte Carlo intervals by resampling whole probe banks, then aggregate checkpoints with a paired seed bootstrap and batches with a batch-level bootstrap. Gradient coordinates are not replicates.
+
+Predeclare the following empirical adequacy gate for the implemented `m=16`; these thresholds are research decisions, not consequences of the moment theorem:
+
+- no target-normalization or denominator-clamp hits in any audited bank;
+- median denominator coefficient of variation at most `0.10`, with its 90th batch percentile at most `0.15`;
+- median batch mean-gradient cosine at least `0.99`, with its 10th batch percentile at least `0.95`;
+- median batch norm ratio in `[0.95,1.05]`;
+- median relative mean bias at most `0.05`, with its 90th batch percentile at most `0.10`;
+- at least `95%` of individual probe banks have positive dot product with the exact gradient;
+- the fixed-denominator control's relative mean error is at most `0.02` or statistically indistinguishable from zero at the Monte Carlo resolution, whichever is larger.
+
+Apply these gates checkpoint by checkpoint. A full gradient-fidelity claim requires every DPSAE checkpoint to pass; the MSE checkpoints are geometry controls and should be reported separately if they fail. Require the FP32 autograd spot check to agree with the analytic sampled gradient to relative error `1e-3` and cosine at least `0.9999`. Fit the stochastic-RMSE log slope over `m=2--32`; values in `[-0.65,-0.35]` are consistent with the predicted `m^{-1/2}` law. Treat the self-normalization bias slope as diagnostic rather than a hard gate unless its magnitude is resolved above Monte Carlo uncertainty.
+
+Failure of this gate would not invalidate the exact held-out result. It would show that the implemented 16-probe optimizer is a materially noisy or biased bridge to that result, so the paper should describe finite-probe training as an empirical surrogate rather than an accurate exact-gradient estimator.
+
+The primary audit belongs in row-Gram and reconstruction space. A secondary raw parameter-gradient audit can apply the fixed checkpoint Jacobian, but it must occur before mixing with MSE, gradient clipping, projected decoder gradients, or optimizer state. Those operations answer optimizer questions, not estimator fidelity.
+
+## 13. Row-Gram dependence and architecture portability
+
+At the loss level, the decoder term depends on a reconstruction only through its row Gram. With
+
+\[
+\widehat G=ZZ^T,
+\qquad
+K(\widehat G)=I-\tau(\widehat G+\tau I)^{-1},
+\]
+
+the differential factorizes as
+
+\[
+dK=\tau(\widehat G+\tau I)^{-1}(d\widehat G)
+(\widehat G+\tau I)^{-1},
+\qquad
+d\widehat G=dZ\,Z^T+Z\,dZ^T.
+\]
+
+Consequently, the same objective can be attached to any differentiable architecture that emits reconstructed rows, and right-orthogonal feature rotations are invisible to it. Infinitesimal directions with `dG=0` are also invisible to the decoder term. This is objective portability, not optimizer or representation portability.
+
+For architecture parameters `theta`,
+
+\[
+\nabla_\theta L
+=J_{G,\theta}^T\nabla_G L
+=J_{Z,\theta}^T\nabla_Z L.
+\]
+
+Changing architectures changes the reachable row-Gram set, the Gram Jacobian and tangent cone, active-set discontinuities, conditioning, sparsity allocation, and batch coupling. BatchTopK makes a group's selected support depend on scores elsewhere in the 2,048-row batch; tokenwise TopK does not. Equal `L0`, NMSE, or bottleneck width therefore does not make their gradient fields equivalent. Even equal row Grams establish equal decoder loss values, not equal feature semantics, coordinate compatibility with a frozen model, or equal first-order descent unless the architectures' attainable Gram tangent maps also match.
+
+The architecture-screen claim should remain narrow: the seed-0 tokenwise result is evidence that the measured gain is not unique to batch-global support competition in that screen. It is not a portability theorem and does not establish architecture-general robustness. Likewise, the nonorthogonal counterfactual can falsify decoder-atom nonorthogonality as a necessary checkpoint-level explanation, but it cannot establish that active-set allocation, batch coupling, or architecture choice is irrelevant.
+
+## 14. Compact claim ledger
+
+- **Exact:** Gaussian unnormalized numerator gradients are unbiased for the identity-target numerator gradient. Fixed-radius gradients are also unbiased conditional on the target-normalization clamp being inactive; their covariance law differs by the spherical trace-subtraction term.
+- **Exact:** The implemented sampled gradient is unbiased for \(\nabla J_m\), the expected clamped self-normalized finite-probe objective, not for the exact trace-ratio gradient.
+- **Asymptotic:** With positive reference energy and denominator control, the sampled gradient converges to the identity-target gradient as independent probe count grows; stochastic noise is order `m^{-1/2}` and self-normalization bias is generically order `m^{-1}`.
+- **Impossible at finite probes:** No deterministic uniform exact-gradient or exact-value guarantee exists for `m<n`; an unseen sample-space direction can carry positive Frobenius error and zero sampled error.
+- **Exact:** The decoder loss factors through the reconstruction row Gram, so its definition is architecture-agnostic and right-orthogonally invariant.
+- **Not implied:** Row-Gram dependence does not give optimizer portability, equal learned features, frozen-network compatibility, or architecture-general empirical gains.
+- **Identity-audit only:** For `Q=A_M^T A_M-A_D^T A_D`, `sum tr Q>0` means DPSAE wins on average over isotropic identity targets. It does not imply `Q` is positive semidefinite or that DPSAE wins every target direction, and it says nothing directly about the sampled training gradient.
+
+## 15. JumpReLU controller calibration after the shared-setting failure
+
+The observed `14x--16x` integration rows show that one shared threshold-controller learning-rate multiplier does not impose a shared sparsity constraint: MSE rises from `27.28` to `30.48`, while DPSAE rises from `31.58` to `36.86`. Separate controller calibration is therefore valid if the target estimand is a comparison of separately calibrated methods at `L0=32`. It no longer supports the stronger description that every optimizer hyperparameter is identical, because controller dynamics can affect learned representations beyond their final L0.
+
+The selection rule must be frozen before inspecting reconstruction or decoder outcomes:
+
+1. Evaluate inference L0 on one fixed calibration split, using block uncertainty over sequences or chunks and a final-window/checkpoint average rather than one last training batch.
+2. Fit a monotone piecewise-linear response of L0 to multiplier separately for MSE and DPSAE. Interpolate only inside the first adjacent pair bracketing 32; do not extrapolate. DPSAE is already bracketed by `14x=31.58` and `15x=35.17`, giving about `14.12x`. MSE has no upper bracket because `16x=30.48`, so the next blind run is `17x`, followed by one-step increases only if 32 remains unbracketed.
+3. Confirm each interpolated setting once on a fresh calibration stream or seed. Require finite gradients, dead-feature fraction below 10%, and a selection L0 whose point estimate and preferably 95% block interval lie inside `[30.4,33.6]`.
+4. Freeze one multiplier per objective before the 25M-token screen. Reapply the L0 gate at 25M without retuning or selecting among long runs by decoder loss.
+
+If only the predeclared 5% band is needed, the existing blind choices are MSE `16x` and DPSAE `14x`, assuming the quoted L0 values are fixed selection-set means. Their realized mismatch, `30.48` versus `31.58`, should be reported and supplemented with an equal-inference-L0 threshold sensitivity analysis.
+
+The final exact comparison should pair seeds, token streams, initialization, and probe streams, then bootstrap held-out geometry groups identically across methods. L0 matching does not match NMSE, dead-feature rate, or threshold dispersion; those remain comparability diagnostics. If NMSE differs materially, the result is a decoder-preservation frontier comparison at matched sparsity, not a clean architecture-portability claim.

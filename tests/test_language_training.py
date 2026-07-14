@@ -210,6 +210,30 @@ def test_jump_relu_threshold_lr_multiplier_isolated_and_scheduled():
     ] == 32.0
 
 
+def test_jump_relu_threshold_lr_multiplier_can_be_calibrated_by_method():
+    fleet = TrainingFleet(
+        [
+            SAETrainSpec("mse_s0", "mse", 0, 2),
+            SAETrainSpec("dpsae_s0", "dpsae", 0, 2, decoder_weight=0.1),
+        ],
+        input_dim=6,
+        dictionary_size=12,
+        learning_rate=1e-3,
+        device=torch.device("cpu"),
+        sparsity_mode="jump_relu",
+        jump_relu_init_mode="topk_quantile",
+        jump_relu_bandwidth=1.0,
+        jump_relu_threshold_lr_multipliers_by_method={"mse": 17.0, "dpsae": 14.0},
+    )
+
+    assert fleet.optimizers["mse_s0"].param_groups[1]["lr_multiplier"] == 17.0
+    assert fleet.optimizers["dpsae_s0"].param_groups[1]["lr_multiplier"] == 14.0
+    assert fleet.sparsity_config()["threshold_lr_multipliers_by_method"] == {
+        "dpsae": 14.0,
+        "mse": 17.0,
+    }
+
+
 def test_jump_relu_threshold_multiplier_changes_only_threshold_update():
     ordinary = _jump_fleet(learning_rate=1e-4, threshold_lr_multiplier=1.0)
     accelerated = _jump_fleet(learning_rate=1e-4, threshold_lr_multiplier=32.0)

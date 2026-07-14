@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import asdict, dataclass
+from typing import Mapping
 
 import torch
 from torch import Tensor
@@ -95,6 +96,7 @@ class TrainingFleet:
         jump_relu_bandwidth: float = 0.001,
         jump_relu_sparsity_weight: float = 1.0,
         jump_relu_threshold_lr_multiplier: float = 1.0,
+        jump_relu_threshold_lr_multipliers_by_method: Mapping[str, float] | None = None,
     ) -> None:
         self.specs = specs
         self.device = device
@@ -124,12 +126,24 @@ class TrainingFleet:
             or jump_relu_threshold_lr_multiplier <= 0
         ):
             raise ValueError("JumpReLU threshold LR multiplier must be finite and positive")
+        method_multipliers = dict(jump_relu_threshold_lr_multipliers_by_method or {})
+        unknown_methods = set(method_multipliers) - {spec.method for spec in specs}
+        if unknown_methods:
+            raise ValueError(
+                f"threshold LR multipliers name absent methods: {sorted(unknown_methods)}"
+            )
+        if any(
+            not math.isfinite(multiplier) or multiplier <= 0
+            for multiplier in method_multipliers.values()
+        ):
+            raise ValueError("method-specific threshold LR multipliers must be finite and positive")
         self.sparsity_mode = sparsity_mode
         self.jump_relu_init_threshold = jump_relu_init_threshold
         self.jump_relu_init_mode = jump_relu_init_mode
         self.jump_relu_bandwidth = jump_relu_bandwidth
         self.jump_relu_sparsity_weight = jump_relu_sparsity_weight
         self.jump_relu_threshold_lr_multiplier = jump_relu_threshold_lr_multiplier
+        self.jump_relu_threshold_lr_multipliers_by_method = method_multipliers
         self.models: dict[str, BatchTopKSAE] = {}
         self.optimizers: dict[str, torch.optim.Optimizer] = {}
         for spec in specs:
@@ -153,7 +167,9 @@ class TrainingFleet:
                     {"params": base_parameters, "lr_multiplier": 1.0},
                     {
                         "params": [model.log_threshold],
-                        "lr_multiplier": jump_relu_threshold_lr_multiplier,
+                        "lr_multiplier": method_multipliers.get(
+                            spec.method, jump_relu_threshold_lr_multiplier
+                        ),
                     },
                 ]
             else:
@@ -422,16 +438,21 @@ class TrainingFleet:
             result[spec.name] = payload
         return result
 
-    def sparsity_config(self) -> dict[str, float | str]:
+    def sparsity_config(self) -> dict[str, float | str | dict[str, float]]:
         if self.sparsity_mode != "jump_relu":
             return {}
-        return {
+        result: dict[str, float | str | dict[str, float]] = {
             "init_threshold": self.jump_relu_init_threshold,
             "initialization": self.jump_relu_init_mode,
             "bandwidth": self.jump_relu_bandwidth,
             "target_l0_loss_weight": self.jump_relu_sparsity_weight,
             "threshold_lr_multiplier": self.jump_relu_threshold_lr_multiplier,
         }
+        if self.jump_relu_threshold_lr_multipliers_by_method:
+            result["threshold_lr_multipliers_by_method"] = dict(
+                sorted(self.jump_relu_threshold_lr_multipliers_by_method.items())
+            )
+        return result
 
     def jump_threshold_summary(self) -> dict[str, dict[str, float | int]]:
         if self.sparsity_mode != "jump_relu":
