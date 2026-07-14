@@ -170,6 +170,18 @@ def direction_bank(groups: int, samples: int, directions: int, seed: int) -> Ten
     return torch.stack(result)
 
 
+def shared_direction_scores(directions: Tensor, operators: Tensor) -> Tensor:
+    """Evaluate shared sample-coordinate tasks against batched operators."""
+
+    if directions.ndim != 3 or operators.ndim != 3:
+        raise ValueError("directions and operators must both be rank 3")
+    if directions.shape[0] != operators.shape[0]:
+        raise ValueError("directions and operators must have the same group count")
+    if directions.shape[2] != operators.shape[1] or operators.shape[1] != operators.shape[2]:
+        raise ValueError("operator dimensions must match the direction dimension")
+    return torch.einsum("gdi,gij,gdj->gd", directions, operators, directions)
+
+
 def spectrum_audit(
     config: dict[str, Any],
     output: Path,
@@ -283,7 +295,10 @@ def spectrum_audit(
             raise RuntimeError(f"seed {seed} eigenvalues exceeded the ridge-contraction bound")
 
         directions_device = directions.to(device)
-        scores = torch.einsum("gdn,gn,gdn->gd", directions_device, eigenvalues, directions_device)
+        # Keep every random task in the shared sample-coordinate basis.  Reusing
+        # eigenvalue coordinates would silently rotate the task bank separately
+        # for each checkpoint seed, invalidating cross-seed paired comparisons.
+        scores = shared_direction_scores(directions_device, q)
         direction_scores.append(scores.detach().cpu())
         group_rows = []
         for group in range(groups):
@@ -305,6 +320,10 @@ def spectrum_audit(
                     "candidate_numerator": float(exact["candidate_numerator"][group]),
                     "source_energy": float(exact["source_energy"][group]),
                     "trace": float(exact["trace"][group]),
+                    "trace_numerical_tolerance": group_size * num_tol,
+                    "numerically_positive_trace": bool(
+                        exact["trace"][group] > group_size * numerical_tolerance[group]
+                    ),
                     "group_reduction": float(exact["trace"][group] / exact["baseline_numerator"][group].clamp_min(1e-30)),
                     "minimum_eigenvalue": float(eig[0]),
                     "maximum_eigenvalue": float(eig[-1]),
@@ -332,6 +351,10 @@ def spectrum_audit(
                         normalized_scores,
                         [0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99],
                     ),
+                    "random_direction_mean_score": float(scores[group].mean()),
+                    "expected_random_direction_mean_score": float(
+                        exact["trace"][group] / group_size
+                    ),
                 }
             )
 
@@ -345,7 +368,12 @@ def spectrum_audit(
             raise RuntimeError(f"seed {seed} does not reconcile with stored exact numerators")
 
         trace = exact["trace"].detach().cpu()
-        positive_trace = trace.clamp_min(0)
+        trace_numerical_tolerance = group_size * numerical_tolerance.detach().cpu()
+        positive_trace = torch.where(
+            trace > trace_numerical_tolerance,
+            trace,
+            torch.zeros_like(trace),
+        )
         positive_trace_sorted = positive_trace.sort(descending=True).values
         top_five_count = max(1, math.ceil(0.05 * groups))
         reductions = trace / exact["baseline_numerator"].detach().cpu().clamp_min(1e-30)
@@ -354,6 +382,21 @@ def spectrum_audit(
         )
         material_positive_probabilities = torch.tensor(
             [row["random_direction_material_positive_probability"] for row in group_rows]
+        )
+        numerical_negative_probabilities = torch.tensor(
+            [row["random_direction_numerical_negative_probability"] for row in group_rows]
+        )
+        material_negative_probabilities = torch.tensor(
+            [row["random_direction_material_negative_probability"] for row in group_rows]
+        )
+        expected_direction_mean = trace / group_size
+        sampled_direction_means = scores.detach().cpu().mean(1)
+        direction_mean_mc_se = torch.sqrt(
+            scores.detach().cpu().var(1, unbiased=True).sum()
+            / (groups * groups * scores.shape[1])
+        )
+        direction_mean_error = float(
+            sampled_direction_means.mean() - expected_direction_mean.mean()
         )
         seed_summary = {
             "seed": seed,
@@ -370,7 +413,9 @@ def spectrum_audit(
             "maximum_symmetry_residual": float(symmetry_residual.max()),
             "maximum_group_trace_reconciliation_error": float(trace_error.max()),
             "summed_trace_reconciliation_error": summed_trace_error,
-            "fraction_groups_positive_trace": float((trace > 0).double().mean()),
+            "fraction_groups_numerically_positive_trace": float(
+                (trace > trace_numerical_tolerance).double().mean()
+            ),
             "fraction_groups_materially_indefinite": sum(row["materially_indefinite"] for row in group_rows) / groups,
             "fraction_groups_material_psd_dominance": sum(row["material_psd_dominance"] for row in group_rows) / groups,
             "group_reduction_quantiles": quantiles(reductions, [0.10, 0.25, 0.50, 0.75, 0.90]),
@@ -386,6 +431,18 @@ def spectrum_audit(
             "conditional_mc_se_random_direction_material_positive": float(
                 torch.sqrt((material_positive_probabilities * (1 - material_positive_probabilities)).sum()) / (groups * math.sqrt(scores.shape[1]))
             ),
+            "mean_random_direction_numerical_negative_probability": float(
+                numerical_negative_probabilities.mean()
+            ),
+            "mean_random_direction_material_negative_probability": float(
+                material_negative_probabilities.mean()
+            ),
+            "sampled_random_direction_mean_score": float(sampled_direction_means.mean()),
+            "expected_random_direction_mean_score": float(expected_direction_mean.mean()),
+            "random_direction_mean_score_error": direction_mean_error,
+            "conditional_mc_se_random_direction_mean_score": float(direction_mean_mc_se),
+            "random_direction_mean_score_error_z": direction_mean_error
+            / max(float(direction_mean_mc_se), 1e-30),
         }
         seed_payload = {
             "complete": True,
@@ -412,7 +469,10 @@ def spectrum_audit(
     shared_numerical = (score_tensor > numerical_tolerances[:, :, None]).all(0)
     shared_material = (score_tensor > material_tolerances[:, :, None]).all(0)
     aligned_positive_trace = torch.tensor(
-        [[row["trace"] > 0 for row in payload["groups"]] for payload in seed_payloads]
+        [
+            [row["numerically_positive_trace"] for row in payload["groups"]]
+            for payload in seed_payloads
+        ]
     ).all(0)
     aligned_indefinite = torch.tensor(
         [[row["materially_indefinite"] for row in payload["groups"]] for payload in seed_payloads]
@@ -420,7 +480,7 @@ def spectrum_audit(
     atomic_torch(
         output / "random_direction_scores.pt",
         {
-            "scores": score_tensor.float(),
+            "scores": score_tensor,
             "material_tolerances": material_tolerances,
             "numerical_tolerances": numerical_tolerances,
             "direction_seed": int(settings["random_direction_seed"]),
@@ -442,10 +502,28 @@ def spectrum_audit(
         "experiment": "taskwise_decoder_advantage_spectrum_summary",
         "seed_summaries": [payload["summary"] for payload in seed_payloads],
         "across_seeds": {
-            "fraction_aligned_group_positions_positive_trace_all_seeds": float(aligned_positive_trace.double().mean()),
+            "fraction_aligned_group_positions_numerically_positive_trace_all_seeds": float(aligned_positive_trace.double().mean()),
             "fraction_aligned_group_positions_materially_indefinite_all_seeds": float(aligned_indefinite.double().mean()),
             "probability_shared_random_direction_numerically_improves_all_seeds": float(shared_numerical.double().mean()),
+            "conditional_mc_se_shared_random_direction_numerically_improves_all_seeds": float(
+                torch.sqrt(
+                    (
+                        shared_numerical.double().mean(1)
+                        * (1 - shared_numerical.double().mean(1))
+                    ).sum()
+                )
+                / (groups * math.sqrt(shared_numerical.shape[1]))
+            ),
             "probability_shared_random_direction_materially_improves_all_seeds": float(shared_material.double().mean()),
+            "conditional_mc_se_shared_random_direction_materially_improves_all_seeds": float(
+                torch.sqrt(
+                    (
+                        shared_material.double().mean(1)
+                        * (1 - shared_material.double().mean(1))
+                    ).sum()
+                )
+                / (groups * math.sqrt(shared_material.shape[1]))
+            ),
         },
         "protocol": {
             **settings,

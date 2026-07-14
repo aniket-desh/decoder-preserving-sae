@@ -1,5 +1,6 @@
 import torch
 
+from experiments.exp07_advantage_spectrum import shared_direction_scores
 from dpsae.decoder_distance import batched_ridge_predict
 from dpsae.language_training import sampled_decoder_loss_from_reference
 from dpsae.task_fidelity import (
@@ -36,6 +37,33 @@ def test_equal_mse_sparse_witness_has_mixed_task_advantage():
         result["baseline_numerator"] - result["candidate_numerator"],
         atol=1e-12,
     )
+
+
+def test_shared_direction_scores_stay_in_sample_coordinates():
+    directions = torch.tensor(
+        [[[1.0, 0.0], [0.0, 1.0], [2**-0.5, 2**-0.5]]],
+        dtype=torch.float64,
+    )
+    operators = torch.tensor(
+        [
+            [[2.0, 0.0], [0.0, -1.0]],
+            [[-1.0, 0.0], [0.0, 2.0]],
+        ],
+        dtype=torch.float64,
+    )
+    repeated_directions = directions.expand(2, -1, -1)
+    scores = shared_direction_scores(repeated_directions, operators)
+    direct = torch.stack(
+        [
+            torch.tensor(
+                [float(u @ operator @ u) for u in directions[0]],
+                dtype=torch.float64,
+            )
+            for operator in operators
+        ]
+    )
+    assert torch.allclose(scores, direct)
+    assert not torch.equal(scores[0], scores[1])
 
 
 def test_fixed_radius_targets_have_training_norm():
