@@ -4,7 +4,9 @@ import torch
 from dpsae.exp04b_execution import (
     confirmatory_example_splits,
     duplicate_state_ranking,
+    encode_confirmatory_states,
 )
+from dpsae.language_sae import BatchTopKSAE
 
 
 def test_confirmatory_split_exhausts_discovery_and_reserves_validation():
@@ -39,3 +41,22 @@ def test_duplicate_state_ranking_returns_frequency_matched_control():
 
     assert set(ranking[:2].tolist()) == {0, 2}
     assert set(random.tolist()) == {1, 3}
+
+
+def test_confirmatory_encoding_ignores_protocol_metadata():
+    model = BatchTopKSAE(4, 8, 2, seed=0)
+    pair = {
+        "positive": torch.randn(3, 4),
+        "negative": torch.randn(3, 4),
+    }
+    cache = {
+        "ranking": pair,
+        "selection": pair,
+        "test": pair,
+        "protocol": {"ranking_examples": 3},
+    }
+
+    encoded = encode_confirmatory_states(model, cache)
+
+    assert set(encoded) == {"ranking", "selection", "test"}
+    assert encoded["ranking"]["codes"][0].shape == (3, 8)

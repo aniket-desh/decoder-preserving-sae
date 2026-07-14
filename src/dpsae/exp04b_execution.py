@@ -97,7 +97,15 @@ def encode_confirmatory_states(
     """Encode all frozen splits once for ranking and harder-target probes."""
 
     result = {}
-    for split, pair in cache.items():
+    for split in ("ranking", "selection", "test"):
+        if split not in cache:
+            raise ValueError(f"confirmatory cache is missing the {split!r} split")
+        pair = cache[split]
+        missing = {"positive", "negative"} - pair.keys()
+        if missing:
+            raise ValueError(
+                f"confirmatory cache split {split!r} is missing {sorted(missing)}"
+            )
         positive, negative, recon_positive, recon_negative = encode_state_pair(
             model, {"positive": pair["positive"], "negative": pair["negative"]}
         )
