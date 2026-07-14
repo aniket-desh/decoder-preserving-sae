@@ -265,7 +265,6 @@ def test_jump_relu_checkpoint_resume_export_and_load_round_trip():
 
 def test_jump_relu_short_finite_integration_stays_near_target():
     fleet = _jump_fleet(learning_rate=3e-4, sparsity_weight=10.0)
-    model = fleet.models["mse_s0"]
     x = torch.randn(16, 6, generator=torch.Generator().manual_seed(9))
     metrics = None
     initial_l0 = None
