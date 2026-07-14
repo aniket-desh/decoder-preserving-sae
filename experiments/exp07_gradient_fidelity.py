@@ -211,11 +211,58 @@ def bootstrap_weights(samples: int, blocks: int, seed: int) -> Tensor:
     return weights
 
 
+def paired_mean_confidence_ball(
+    statistics: dict[str, Tensor],
+    weights: Tensor,
+    *,
+    family_size: int,
+    alpha: float = 0.05,
+) -> dict[str, float]:
+    """Upper-bound the paired sampled-minus-fixed mean-gradient norm."""
+
+    if family_size < 1 or not 0 < alpha < 1:
+        raise ValueError("confidence-ball family size and alpha are invalid")
+    cross = statistics["sampled_fixed_cross_gram"]
+    difference_gram = (
+        statistics["sampled_gram"]
+        + statistics["fixed_gram"]
+        - cross
+        - cross.mT
+    )
+    blocks = len(difference_gram)
+    exact_norm_squared = statistics["exact_norm_squared"].clamp_min(1e-300)
+    ones = torch.ones(blocks, dtype=torch.float64, device=difference_gram.device)
+    mean_relative_norm = float(
+        ((ones @ difference_gram @ ones).clamp_min(0) / exact_norm_squared).sqrt()
+        / blocks
+    )
+    centered = weights.to(
+        device=difference_gram.device,
+        dtype=torch.float64,
+    ) - ones
+    bootstrap_radius = (
+        (((centered @ difference_gram) * centered).sum(1).clamp_min(0))
+        / exact_norm_squared
+    ).sqrt() / blocks
+    confidence_level = 1 - alpha / family_size
+    radius = float(torch.quantile(bootstrap_radius, confidence_level))
+    return {
+        "observed_relative_mean_norm": mean_relative_norm,
+        "bootstrap_radius": radius,
+        "upper_confidence_bound": mean_relative_norm + radius,
+        "familywise_confidence_level": 1 - alpha,
+        "per_member_quantile": confidence_level,
+        "family_size": family_size,
+    }
+
+
 def block_bootstrap_gradient_summary(
     statistics: dict[str, Tensor],
     *,
     samples: int,
     seed: int,
+    confidence_ball_family_size: int = 1,
+    confidence_ball_samples: int | None = None,
 ) -> dict[str, Any]:
     """Bootstrap whole paired blocks using recoverable Gram statistics."""
 
@@ -241,6 +288,16 @@ def block_bootstrap_gradient_summary(
             }
             for key in point
         }
+    confidence_weights = bootstrap_weights(
+        confidence_ball_samples or samples,
+        blocks,
+        seed + 50_000_000,
+    )
+    result["paired_mean_confidence_ball"] = paired_mean_confidence_ball(
+        statistics,
+        confidence_weights,
+        family_size=confidence_ball_family_size,
+    )
     return result
 
 
@@ -517,6 +574,12 @@ def run_model(
                     sufficient,
                     samples=int(settings["bootstrap_samples"]),
                     seed=int(settings["bootstrap_seed"]) + batch_index,
+                    confidence_ball_family_size=int(
+                        settings["paired_confidence_family_size"]
+                    ),
+                    confidence_ball_samples=int(
+                        settings["paired_confidence_bootstrap_samples"]
+                    ),
                 )
                 sampled_rmse = float(sampled_raw["relative_error"].square().mean().sqrt())
                 fixed_rmse = float(fixed_raw["relative_error"].square().mean().sqrt())
@@ -645,8 +708,10 @@ def hierarchical_expected_gradient_summary(
         "sampled_relative_bias": [],
         "fixed_relative_bias": [],
         "sampled_minus_fixed_relative_bias": [],
+        "paired_confidence_upper": [],
     }
     points = {key: [] for key in by_batch}
+    confidence_balls = []
     point_weights = torch.ones(1, blocks, dtype=torch.float64)
     for batch_index in range(batches):
         statistics = raw[str(batch_index)][str(probes)][space][
@@ -683,12 +748,28 @@ def hierarchical_expected_gradient_summary(
             point_weights,
             estimator="sampled_minus_fixed",
         )
+        confidence_weights = bootstrap_weights(
+            int(settings["paired_confidence_bootstrap_samples"]),
+            blocks,
+            seed + 50_000_000 + batch_index,
+        )
+        confidence_ball = paired_mean_confidence_ball(
+            statistics,
+            confidence_weights,
+            family_size=int(settings["paired_confidence_family_size"]),
+        )
+        confidence_balls.append({"batch": batch_index, **confidence_ball})
         values = {
             "sampled_cosine": sampled["cosine"],
             "sampled_norm_ratio": sampled["norm_ratio"],
             "sampled_relative_bias": sampled["relative_bias"],
             "fixed_relative_bias": fixed["relative_bias"],
             "sampled_minus_fixed_relative_bias": paired["relative_bias"],
+            "paired_confidence_upper": torch.full(
+                (samples,),
+                confidence_ball["upper_confidence_bound"],
+                dtype=torch.float64,
+            ),
         }
         point_values = {
             "sampled_cosine": sampled_point["cosine"],
@@ -696,6 +777,10 @@ def hierarchical_expected_gradient_summary(
             "sampled_relative_bias": sampled_point["relative_bias"],
             "fixed_relative_bias": fixed_point["relative_bias"],
             "sampled_minus_fixed_relative_bias": paired_point["relative_bias"],
+            "paired_confidence_upper": torch.tensor(
+                [confidence_ball["upper_confidence_bound"]],
+                dtype=torch.float64,
+            ),
         }
         for key in by_batch:
             by_batch[key].append(values[key])
@@ -723,6 +808,8 @@ def hierarchical_expected_gradient_summary(
             "sampled_minus_fixed_relative_bias",
             0.90,
         ),
+        "median_paired_confidence_upper": ("paired_confidence_upper", 0.50),
+        "p90_paired_confidence_upper": ("paired_confidence_upper", 0.90),
     }
     summary = {}
     for label, (key, probability) in definitions.items():
@@ -734,6 +821,7 @@ def hierarchical_expected_gradient_summary(
             "point": point,
             "hierarchical_bootstrap95": interval(aggregate_draws),
         }
+    summary["paired_confidence_balls_by_batch"] = confidence_balls
     return summary
 
 
@@ -756,21 +844,6 @@ def one_sided_gate(
             "decisive_fail": point > threshold and low > threshold,
         }
     raise ValueError(f"unknown gate direction {direction}")
-
-
-def interval_gate(
-    result: dict[str, Any],
-    lower: float,
-    upper: float,
-) -> dict[str, bool]:
-    low, high = result["hierarchical_bootstrap95"]
-    point = float(result["point"])
-    return {
-        "conservative_pass": low >= lower and high <= upper,
-        "decisive_fail": (
-            (point < lower and high < lower) or (point > upper and low > upper)
-        ),
-    }
 
 
 def checkpoint_gate(
@@ -834,34 +907,14 @@ def checkpoint_gate(
         )
         expectation_inference[space] = inference
         gate_details = {
-            "median_cosine": one_sided_gate(
-                inference["median_expected_cosine"],
-                float(gates["minimum_median_mean_gradient_cosine"]),
-                direction="minimum",
-            ),
-            "p10_cosine": one_sided_gate(
-                inference["p10_expected_cosine"],
-                float(gates["minimum_batch_p10_mean_gradient_cosine"]),
-                direction="minimum",
-            ),
-            "median_norm_ratio": interval_gate(
-                inference["median_expected_norm_ratio"],
-                float(gates["minimum_median_norm_ratio"]),
-                float(gates["maximum_median_norm_ratio"]),
-            ),
-            "median_bias": one_sided_gate(
-                inference["median_expected_relative_bias"],
+            "paired_median_bias_confidence_ball": one_sided_gate(
+                inference["median_paired_confidence_upper"],
                 float(gates["maximum_median_relative_mean_bias"]),
                 direction="maximum",
             ),
-            "p90_bias": one_sided_gate(
-                inference["p90_expected_relative_bias"],
+            "paired_p90_bias_confidence_ball": one_sided_gate(
+                inference["p90_paired_confidence_upper"],
                 float(gates["maximum_batch_p90_relative_mean_bias"]),
-                direction="maximum",
-            ),
-            "fixed_control_p90_bias": one_sided_gate(
-                inference["p90_fixed_expected_relative_bias"],
-                float(gates["maximum_fixed_denominator_mean_error"]),
                 direction="maximum",
             ),
         }
@@ -916,6 +969,13 @@ def checkpoint_gate(
         "all_checks_pass": all(checks.values()),
         "finite_bank_point_gate_pass": all(checks.values()),
         "expected_gradient_fidelity_status": expectation_status,
+        "expected_gradient_gate_basis": (
+            "The fixed-denominator control is exactly unbiased when target "
+            "normalization never clamps. Centered paired-block confidence balls "
+            "therefore bound the expected sampled-gradient bias directly. A "
+            "relative bias bound epsilon also implies norm ratio in "
+            "[1-epsilon, 1+epsilon] and cosine at least sqrt(1-epsilon^2)."
+        ),
         "summaries": summaries,
         "expected_gradient_inference": expectation_inference,
         "expected_gradient_gate_details": expectation_gate_details,
@@ -965,8 +1025,9 @@ def summarize(config: dict[str, Any], output: Path) -> dict[str, Any]:
             "self-normalized objective. Passing this audit supports numerical "
             "alignment with the identity-target gradient at m=16; it is not an "
             "exact finite-m unbiasedness theorem for the identity-target ratio. "
-            "Expectation-level intervals use a conservative paired block bootstrap; "
-            "squared-bias inference is descriptive near a zero-bias boundary."
+            "Expectation-level classification uses a centered paired block "
+            "confidence ball for sampled-minus-fixed gradients; squared-bias "
+            "U-statistics remain descriptive diagnostics near zero bias."
         ),
         "inputs": {
             name: input_record(output / f"gradient_fidelity_{name}.json")

@@ -114,7 +114,13 @@ def test_block_statistics_recover_u_statistical_gradient_bias():
         expected_paired_squared.reshape(1),
     )
     bootstrap = block_bootstrap_gradient_summary(statistics, samples=64, seed=11)
-    assert set(bootstrap) == {"sampled", "fixed", "sampled_minus_fixed"}
+    assert set(bootstrap) == {
+        "sampled",
+        "fixed",
+        "sampled_minus_fixed",
+        "paired_mean_confidence_ball",
+    }
+    assert bootstrap["paired_mean_confidence_ball"]["upper_confidence_bound"] >= 0
     assert len(bootstrap["sampled"]["cosine"]["bootstrap95"]) == 2
 
     raw = {
@@ -132,6 +138,8 @@ def test_block_statistics_recover_u_statistical_gradient_bias():
             "batches": 2,
             "bootstrap_blocks": 4,
             "bootstrap_seed": 13,
+            "paired_confidence_bootstrap_samples": 128,
+            "paired_confidence_family_size": 4,
         },
         probes=16,
         space="row_gram",

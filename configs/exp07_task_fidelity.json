@@ -46,6 +46,8 @@
     "bootstrap_blocks": 16,
     "bootstrap_samples": 10000,
     "bootstrap_seed": 2027071429,
+    "paired_confidence_bootstrap_samples": 100000,
+    "paired_confidence_family_size": 24,
     "probe_seed": 2027071421,
     "target_rms_clamp": 1e-6,
     "denominator_clamp": 1e-12,
