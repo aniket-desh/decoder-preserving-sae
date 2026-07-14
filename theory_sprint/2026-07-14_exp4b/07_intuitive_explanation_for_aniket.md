@@ -1,0 +1,17 @@
+# Intuitive explanation for Aniket
+
+The clean result is that DPSAE preserves **which label patterns you could fit across a group of tokens after retraining a linear readout**, and it does this much better than an MSE SAE at the same sparsity. It does not yet show that the language model itself uses the reconstruction better.
+
+For a group of 128 token activations, imagine inventing a scalar label for every token and fitting ridge regression from the activations to those labels. The fitted predictions are \(K_Xy\). Repeat after replacing the activations with the SAE reconstruction and you get \(K_{\widehat X}y\). DPSAE trains the SAE to keep these two prediction vectors close over many random label patterns. The exact held-out evaluation tries every coordinate direction at once, so the 24% improvement is not a lucky random-probe result.
+
+The theorem says this metric has a precise meaning: averaged over the target family, its squared value is exactly the disagreement between the two refitted predictions. It also bounds the worst absolute disagreement over a corresponding ellipsoid of targets. The word “refitted” matters because each representation gets its own best ridge decoder.
+
+That immediately explains why IOI can fail. If the SAE rotates two feature coordinates, every refittable linear task can survive perfectly because the new decoder can rotate its weights back. The frozen transformer weights do not rotate, so its logits can change arbitrarily. Decoder preservation and frozen-model preservation ask different questions.
+
+The rank theorem gives a useful negative result. If the SAE were merely allowed to output any rank-\(r\) matrix, DPSAE would keep the same singular directions as PCA/MSE; it would only price discarded directions differently. The static spectral baseline implements those prices for full-mode deletion, yet it gets less than 1% improvement where DPSAE gets about 24%. So the interesting part is not a secret new PCA weighting. It is somewhere in the actual sparse, overcomplete, nonlinear model.
+
+There are two implementation details that change how broadly we can talk. First, training normalizes every random target to fixed length and divides by a random reference estimate, so it optimizes a slightly biased self-normalized surrogate; the exact evaluation removes that ambiguity. Second, the geometry is built separately inside token groups. Changing group size from 128 to 256 cuts the advantage from about 24% to 13%, which means group construction is part of the definition rather than a harmless batching detail.
+
+My call is to make the paper about finite-group refittable decoder preservation and the unexplained sparse nonlinear gap. Fisher geometry should stay a future direction because it would describe the frozen model's local output sensitivity, and Experiment 4b did not show that bridge.
+
+The sharpest next experiment needs no retraining: choose a continuous target that is guaranteed to be linear at block 8, require the dense activation to recover it on held-out data, and compare collateral KL only after matching every SAE to the same IOI effect. That tells us whether the missing bridge is merely a bad target/effect mismatch or a real separation between refittable access and frozen behavior. After that, a small architecture ablation—the same decoder term with BatchTopK, tokenwise TopK, and JumpReLU—is the cleanest way to locate the unexplained sparse mechanism.

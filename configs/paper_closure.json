@@ -1,0 +1,101 @@
+{
+  "experiment": "paper_closure",
+  "source_config": "configs/exp04_ioi_mechanism.json",
+  "source_artifact": "artifacts/exp04_ioi_mechanism",
+  "fresh_corpus": {
+    "token_offset": 190000000,
+    "token_count": 10000000,
+    "selection_range": [0, 5000000],
+    "test_range": [5000000, 10000000]
+  },
+  "natural_text": {
+    "activation_tokens": 65536,
+    "exact_tokens": 16384,
+    "exact_max_groups": 128,
+    "bootstrap_samples": 10000,
+    "sampled_probes": 16,
+    "sampled_probe_seed": 2027071401,
+    "selection_seed": 2027071402,
+    "test_seed": 2027071403,
+    "ridge_fractions": [0.125, 0.25, 0.5],
+    "group_sizes": [64, 128, 256],
+    "groupings": ["contiguous", "shuffled", "document_balanced"],
+    "ridge_calibration_groups": 16,
+    "matched_sequences": 256
+  },
+  "frontier": {
+    "existing_weights": [0.125, 0.25, 0.5, 1.0],
+    "new_screen_weights": [0.03125, 0.0625, 0.09375, 0.125],
+    "screen_tokens": 25000000,
+    "confirmation_tokens": 100000000,
+    "confirmation_seeds": [0, 1, 2],
+    "confirmation_replicate": 1,
+    "selection_rule": {
+      "maximum_nmse_ratio": 1.01,
+      "minimum_exact_decoder_reduction": 0.1,
+      "selection_order": ["smaller_decoder_weight", "lower_nmse"]
+    },
+    "confirmation_gate": {
+      "maximum_nmse_ratio_every_seed": 1.01,
+      "minimum_median_exact_decoder_reduction": 0.1,
+      "require_positive_reduction_every_seed": true,
+      "require_ci_excludes_zero_every_seed": true
+    }
+  },
+  "architecture": {
+    "integration_tokens": 2000000,
+    "screen_tokens": 25000000,
+    "mechanisms": ["batch_topk", "token_topk", "jump_relu"],
+    "target_l0": 32,
+    "jump_relu_init_threshold": 0.001,
+    "jump_relu_init_mode": "topk_quantile",
+    "jump_relu_bandwidth": 0.001,
+    "jump_relu_target_l0_loss_weight": 1.0,
+    "jump_relu_threshold_lr_multiplier": 9.0,
+    "jump_relu_threshold_lr_multiplier_integration_grid": [9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0],
+    "jump_relu_threshold_lr_calibration_bracket": {
+      "low": {
+        "multiplier": 8.0,
+        "final_l0": [20.318359375, 23.0146484375]
+      },
+      "high": {
+        "multiplier": 16.0,
+        "final_l0": [30.4833984375, 36.85546875]
+      },
+      "rule": "refine the untested controller settings between the completed 8x undershoot and 16x split gate; select the smallest setting matching both L0 targets without consulting decoder differences"
+    },
+    "l0_tolerance_fraction": 0.05,
+    "maximum_dead_fraction": 0.1,
+    "minimum_objective_improvement": 0.1,
+    "minimum_interaction_for_confirmation": 0.1
+  },
+  "generality": {
+    "screen_tokens": 25000000,
+    "confirmation_tokens": 100000000,
+    "gpt2_layer": 4,
+    "non_gpt2_model": "EleutherAI/pythia-160m-deduped",
+    "non_gpt2_layer": 8,
+    "minimum_screen_exact_decoder_reduction": 0.1,
+    "maximum_screen_nmse_ratio": 1.1
+  },
+  "discovery": {
+    "open_discovery_range": [180000000, 182500000],
+    "recurrence_range": [182500000, 185000000],
+    "opened_selection_range": [185000000, 190000000],
+    "sealed_final_range": [195000000, 200000000],
+    "groups": 16,
+    "top_modes_per_group": 2,
+    "bottom_modes_per_group": 2,
+    "maximum_promoted_hypotheses": 3,
+    "minimum_seed_pairs": 2,
+    "minimum_independent_groups": 4
+  },
+  "baseline": {
+    "beta_grid": [0.125, 0.25, 0.5, 1.0],
+    "screen_tokens": 25000000,
+    "confirmation_tokens": 100000000,
+    "confirmation_seeds": [0, 1, 2],
+    "confirmation_replicate": 1,
+    "checkpoint_tokens": 5000000
+  }
+}
