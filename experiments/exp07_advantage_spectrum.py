@@ -182,6 +182,15 @@ def shared_direction_scores(directions: Tensor, operators: Tensor) -> Tensor:
     return torch.einsum("gdi,gij,gdj->gd", directions, operators, directions)
 
 
+def pearson_correlation(left: Tensor, right: Tensor) -> float:
+    left = left.double().flatten()
+    right = right.double().flatten()
+    left = left - left.mean()
+    right = right - right.mean()
+    denominator = left.square().sum().sqrt() * right.square().sum().sqrt()
+    return float((left * right).sum() / denominator.clamp_min(1e-30))
+
+
 def spectrum_audit(
     config: dict[str, Any],
     output: Path,
@@ -223,6 +232,7 @@ def spectrum_audit(
         int(settings["random_direction_seed"]),
     )
     direction_scores = []
+    direction_normalizers = []
     seed_payloads = []
 
     for seed in settings["seeds"]:
@@ -300,6 +310,7 @@ def spectrum_audit(
         # for each checkpoint seed, invalidating cross-seed paired comparisons.
         scores = shared_direction_scores(directions_device, q)
         direction_scores.append(scores.detach().cpu())
+        direction_normalizers.append(baseline_average_error.detach().cpu())
         group_rows = []
         for group in range(groups):
             eig = eigenvalues[group]
@@ -391,6 +402,8 @@ def spectrum_audit(
         )
         expected_direction_mean = trace / group_size
         sampled_direction_means = scores.detach().cpu().mean(1)
+        normalized_eigenvalues = eigenvalues.detach().cpu() / baseline_average_error.detach().cpu()[:, None].clamp_min(1e-30)
+        normalized_direction_scores = scores.detach().cpu() / baseline_average_error.detach().cpu()[:, None].clamp_min(1e-30)
         direction_mean_mc_se = torch.sqrt(
             scores.detach().cpu().var(1, unbiased=True).sum()
             / (groups * groups * scores.shape[1])
@@ -423,6 +436,34 @@ def spectrum_audit(
             "top_five_percent_groups_share_of_positive_trace": float(positive_trace_sorted[:top_five_count].sum() / positive_trace.sum().clamp_min(1e-30)),
             "total_positive_spectral_mass": sum(row["positive_spectral_mass"] for row in group_rows),
             "total_negative_spectral_mass": sum(row["negative_spectral_mass"] for row in group_rows),
+            "negative_to_positive_spectral_mass_ratio": sum(
+                row["negative_spectral_mass"] for row in group_rows
+            )
+            / max(sum(row["positive_spectral_mass"] for row in group_rows), 1e-30),
+            "normalized_minimum_eigenvalue_quantiles": quantiles(
+                normalized_eigenvalues[:, 0],
+                [0.10, 0.50, 0.90],
+            ),
+            "normalized_maximum_eigenvalue_quantiles": quantiles(
+                normalized_eigenvalues[:, -1],
+                [0.10, 0.50, 0.90],
+            ),
+            "largest_positive_mode_share_quantiles": quantiles(
+                torch.tensor(
+                    [row["largest_positive_mode_share"] for row in group_rows]
+                ),
+                [0.10, 0.50, 0.90],
+            ),
+            "largest_negative_mode_share_quantiles": quantiles(
+                torch.tensor(
+                    [row["largest_negative_mode_share"] for row in group_rows]
+                ),
+                [0.10, 0.50, 0.90],
+            ),
+            "pooled_random_direction_relative_advantage_quantiles": quantiles(
+                normalized_direction_scores,
+                [0.01, 0.05, 0.50, 0.95, 0.99],
+            ),
             "mean_random_direction_numerical_positive_probability": float(numerical_positive_probabilities.mean()),
             "conditional_mc_se_random_direction_numerical_positive": float(
                 torch.sqrt((numerical_positive_probabilities * (1 - numerical_positive_probabilities)).sum()) / (groups * math.sqrt(scores.shape[1]))
@@ -458,6 +499,8 @@ def spectrum_audit(
             torch.cuda.empty_cache()
 
     score_tensor = torch.stack(direction_scores)
+    normalizer_tensor = torch.stack(direction_normalizers)
+    normalized_score_tensor = score_tensor / normalizer_tensor[:, :, None].clamp_min(1e-30)
     material_tolerances = torch.tensor(
         [[row["material_tolerance"] for row in payload["groups"]] for payload in seed_payloads],
         dtype=torch.float64,
@@ -468,6 +511,8 @@ def spectrum_audit(
     )
     shared_numerical = (score_tensor > numerical_tolerances[:, :, None]).all(0)
     shared_material = (score_tensor > material_tolerances[:, :, None]).all(0)
+    numerical_success = score_tensor > numerical_tolerances[:, :, None]
+    material_success = score_tensor > material_tolerances[:, :, None]
     aligned_positive_trace = torch.tensor(
         [
             [row["numerically_positive_trace"] for row in payload["groups"]]
@@ -481,6 +526,7 @@ def spectrum_audit(
         output / "random_direction_scores.pt",
         {
             "scores": score_tensor,
+            "baseline_average_error": normalizer_tensor,
             "material_tolerances": material_tolerances,
             "numerical_tolerances": numerical_tolerances,
             "direction_seed": int(settings["random_direction_seed"]),
@@ -497,6 +543,55 @@ def spectrum_audit(
         "gpu_name": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
         "torch_version": torch.__version__,
     }
+    pairwise_overlap = []
+    for left in range(len(seed_payloads)):
+        for right in range(left + 1, len(seed_payloads)):
+            pair = {
+                "seed_pair": [
+                    seed_payloads[left]["summary"]["seed"],
+                    seed_payloads[right]["summary"]["seed"],
+                ]
+            }
+            for label, success in (
+                ("numerical", numerical_success),
+                ("material", material_success),
+            ):
+                left_probability = success[left].double().mean()
+                right_probability = success[right].double().mean()
+                observed = (success[left] & success[right]).double().mean()
+                conditional_independence = (
+                    success[left].double().mean(1)
+                    * success[right].double().mean(1)
+                ).mean()
+                pair[f"{label}_observed_joint_probability"] = float(observed)
+                pair[f"{label}_pooled_marginal_product"] = float(
+                    left_probability * right_probability
+                )
+                pair[f"{label}_conditional_independence_probability"] = float(
+                    conditional_independence
+                )
+                pair[f"{label}_excess_over_conditional_independence"] = float(
+                    observed - conditional_independence
+                )
+            pair["normalized_score_correlation"] = pearson_correlation(
+                normalized_score_tensor[left],
+                normalized_score_tensor[right],
+            )
+            left_within = normalized_score_tensor[left] - normalized_score_tensor[
+                left
+            ].mean(1, keepdim=True)
+            right_within = normalized_score_tensor[right] - normalized_score_tensor[
+                right
+            ].mean(1, keepdim=True)
+            pair["within_group_centered_normalized_score_correlation"] = (
+                pearson_correlation(left_within, right_within)
+            )
+            pairwise_overlap.append(pair)
+
+    pooled_numerical_marginals = numerical_success.double().mean(dim=(1, 2))
+    pooled_material_marginals = material_success.double().mean(dim=(1, 2))
+    conditional_numerical_joint = numerical_success.double().mean(2).prod(0).mean()
+    conditional_material_joint = material_success.double().mean(2).prod(0).mean()
     summary = {
         "complete": True,
         "experiment": "taskwise_decoder_advantage_spectrum_summary",
@@ -524,6 +619,25 @@ def spectrum_audit(
                 )
                 / (groups * math.sqrt(shared_material.shape[1]))
             ),
+            "numerical_pooled_marginal_product_all_seeds": float(
+                pooled_numerical_marginals.prod()
+            ),
+            "numerical_conditional_independence_probability_all_seeds": float(
+                conditional_numerical_joint
+            ),
+            "numerical_excess_joint_over_conditional_independence": float(
+                shared_numerical.double().mean() - conditional_numerical_joint
+            ),
+            "material_pooled_marginal_product_all_seeds": float(
+                pooled_material_marginals.prod()
+            ),
+            "material_conditional_independence_probability_all_seeds": float(
+                conditional_material_joint
+            ),
+            "material_excess_joint_over_conditional_independence": float(
+                shared_material.double().mean() - conditional_material_joint
+            ),
+            "pairwise_overlap_and_score_correlation": pairwise_overlap,
         },
         "protocol": {
             **settings,
