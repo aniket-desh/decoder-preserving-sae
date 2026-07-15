@@ -1,0 +1,365 @@
+{
+  "across_seeds": {
+    "conditional_mc_se_shared_random_direction_materially_improves_all_seeds": 0.0006383694263015101,
+    "conditional_mc_se_shared_random_direction_numerically_improves_all_seeds": 0.0006760789028022562,
+    "fraction_aligned_group_positions_materially_indefinite_all_seeds": 1.0,
+    "fraction_aligned_group_positions_numerically_positive_trace_all_seeds": 1.0,
+    "material_conditional_independence_probability_all_seeds": 0.317431141211614,
+    "material_excess_joint_over_conditional_independence": 0.009700130150690711,
+    "material_pooled_marginal_product_all_seeds": 0.3140199180807983,
+    "numerical_conditional_independence_probability_all_seeds": 0.539804846228435,
+    "numerical_excess_joint_over_conditional_independence": 0.0045066772090649465,
+    "numerical_pooled_marginal_product_all_seeds": 0.5369445699716979,
+    "pairwise_overlap_and_score_correlation": [
+      {
+        "material_conditional_independence_probability": 0.46510680485516787,
+        "material_excess_over_conditional_independence": 0.005685965530574322,
+        "material_observed_joint_probability": 0.4707927703857422,
+        "material_pooled_marginal_product": 0.46304193390824366,
+        "normalized_score_correlation": 0.07393169161241127,
+        "numerical_conditional_independence_probability": 0.6632492328062654,
+        "numerical_excess_over_conditional_independence": 0.002167484723031521,
+        "numerical_observed_joint_probability": 0.6654167175292969,
+        "numerical_pooled_marginal_product": 0.6619176926906221,
+        "seed_pair": [
+          0,
+          1
+        ],
+        "within_group_centered_normalized_score_correlation": 0.06311417412903061
+      },
+      {
+        "material_conditional_independence_probability": 0.4544007177464664,
+        "material_excess_over_conditional_independence": 0.004030526150017977,
+        "material_observed_joint_probability": 0.4584312438964844,
+        "material_pooled_marginal_product": 0.4534576660444145,
+        "normalized_score_correlation": 0.051924509532146765,
+        "numerical_conditional_independence_probability": 0.6536122588440776,
+        "numerical_excess_over_conditional_independence": 0.0016211243346333504,
+        "numerical_observed_joint_probability": 0.6552333831787109,
+        "numerical_pooled_marginal_product": 0.6527881745569175,
+        "seed_pair": [
+          0,
+          2
+        ],
+        "within_group_centered_normalized_score_correlation": 0.050735569143062265
+      },
+      {
+        "material_conditional_independence_probability": 0.4716813312843442,
+        "material_excess_over_conditional_independence": 0.005047108046710491,
+        "material_observed_joint_probability": 0.4767284393310547,
+        "material_pooled_marginal_product": 0.4696316094850772,
+        "normalized_score_correlation": 0.07421512554397619,
+        "numerical_conditional_independence_probability": 0.668626403901726,
+        "numerical_excess_over_conditional_independence": 0.0018180846236646175,
+        "numerical_observed_joint_probability": 0.6704444885253906,
+        "numerical_pooled_marginal_product": 0.6672408722806722,
+        "seed_pair": [
+          1,
+          2
+        ],
+        "within_group_centered_normalized_score_correlation": 0.06451158274420414
+      }
+    ],
+    "probability_shared_random_direction_materially_improves_all_seeds": 0.3271312713623047,
+    "probability_shared_random_direction_numerically_improves_all_seeds": 0.5443115234375
+  },
+  "complete": true,
+  "experiment": "taskwise_decoder_advantage_spectrum_summary",
+  "inputs": {
+    "cache": {
+      "bytes": 101192150,
+      "path": "/workspace/decoder-preserving-sae/artifacts/paper_closure/natural_selection.pt",
+      "sha256": "6f8b18b7396f360de843b0183d4fd3128fe11eceb1a38a17f866ad04aaad6749"
+    },
+    "config": {
+      "bytes": 3964,
+      "path": "/workspace/dpsae-exp07/configs/exp07_task_fidelity.json",
+      "sha256": "a76531d3cc275313c12a2f70480f14d23c86bfd720ab5c7ab8aabbd710b40cf4"
+    },
+    "confirmation": {
+      "0": {
+        "bytes": 19124,
+        "path": "/workspace/decoder-preserving-sae/artifacts/paper_closure/confirmation_seed0.json",
+        "sha256": "7e97d39f09e459c7d9cfe1337c734965be35093b07c0adb30cdf8e320b327363"
+      },
+      "1": {
+        "bytes": 19135,
+        "path": "/workspace/decoder-preserving-sae/artifacts/paper_closure/confirmation_seed1.json",
+        "sha256": "a8371a48d2670078ac0990195e51401cb14ebc3d3bef36ec2725ad769f94ebd0"
+      },
+      "2": {
+        "bytes": 19129,
+        "path": "/workspace/decoder-preserving-sae/artifacts/paper_closure/confirmation_seed2.json",
+        "sha256": "8cf9046fb111f545b3e05dd2594a52cffb48c0ff0eb44203018ac29ed08df4f4"
+      }
+    },
+    "evaluator": {
+      "bytes": 34163,
+      "path": "/workspace/dpsae-exp07/experiments/exp07_advantage_spectrum.py",
+      "sha256": "f71216606b3ded0208812fc1287464f376d663b27e2d6165784b17d029aab1ba"
+    },
+    "models": {
+      "bytes": 605191237,
+      "path": "/workspace/decoder-preserving-sae/artifacts/paper_closure/confirmation_common/models.pt",
+      "sha256": "227e60c2162e0a948dbd53b0c3afbb063435ec288fec47e33e5583193cc7c781"
+    },
+    "task_fidelity_module": {
+      "bytes": 6869,
+      "path": "/workspace/dpsae-exp07/src/dpsae/task_fidelity.py",
+      "sha256": "7460b9bb9e314b96fd336eb964f5842d7856c27137b08345da85b9924adf6f8f"
+    }
+  },
+  "protocol": {
+    "baseline_template": "mse_s{seed}",
+    "cache": "artifacts/paper_closure/natural_selection.pt",
+    "candidate_template": "dpsae_w0.03125_s{seed}",
+    "confirmation_template": "artifacts/paper_closure/confirmation_seed{seed}.json",
+    "eigenvalue_bound_tolerance": 1e-10,
+    "exact_tokens": 16384,
+    "group_size": 128,
+    "group_trace_relative_tolerance": 1e-11,
+    "material_fraction_of_baseline_average_error": 0.05,
+    "maximum_symmetry_residual": 1e-12,
+    "minimum_numerical_tolerance": 1e-12,
+    "models": "artifacts/paper_closure/confirmation_common/models.pt",
+    "random_direction_bank_reused_across_seeds": true,
+    "random_direction_seed": 2027071411,
+    "random_directions_per_group": 4096,
+    "reconstruction_batch_tokens": 4096,
+    "reconstruction_support": "stored inference threshold, matching headline exact audit",
+    "ridge": 1.6049035191535947,
+    "roundoff_multiplier": 100.0,
+    "seeds": [
+      0,
+      1,
+      2
+    ],
+    "spectrum_precision": "float64",
+    "stored_fp32_relative_tolerance": 0.0001,
+    "sum_trace_relative_tolerance": 1e-10
+  },
+  "repository": {
+    "dirty": false,
+    "revision": "46eb22a25f2c796edcc95b81ee2545d634a1e09f",
+    "status": []
+  },
+  "resources": {
+    "device": "cuda:0",
+    "free_gib_at_start": 213422.57543945312,
+    "gpu_memory_fraction_cap": 0.25,
+    "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "minimum_free_gib_guard": 20.0,
+    "peak_allocated_gpu_gib": 1.4420576095581055,
+    "torch_version": "2.13.0+cu130"
+  },
+  "seed_summaries": [
+    {
+      "baseline": "mse_s0",
+      "candidate": "dpsae_w0.03125_s0",
+      "conditional_mc_se_random_direction_material_positive": 0.0006413579103536904,
+      "conditional_mc_se_random_direction_mean_score": 7.182534308480021e-07,
+      "conditional_mc_se_random_direction_numerical_positive": 0.0005407315911725163,
+      "expected_random_direction_mean_score": 0.0004447402392944996,
+      "fraction_groups_material_psd_dominance": 0.0,
+      "fraction_groups_materially_indefinite": 1.0,
+      "fraction_groups_numerically_positive_trace": 1.0,
+      "group_reduction_quantiles": {
+        "q10": 0.07566657398198463,
+        "q25": 0.0871778989061767,
+        "q50": 0.10619381584156076,
+        "q75": 0.12289163042107759,
+        "q90": 0.13683621839550655
+      },
+      "groups": 128,
+      "headline_distortion_difference": 0.004178478384952641,
+      "largest_negative_mode_share_quantiles": {
+        "q10": 0.06536715105175972,
+        "q50": 0.07279495522379875,
+        "q90": 0.08276807442307473
+      },
+      "largest_positive_mode_share_quantiles": {
+        "q10": 0.06573259383440018,
+        "q50": 0.07403864338994026,
+        "q90": 0.0844808854162693
+      },
+      "maximum_group_trace_reconciliation_error": 1.8041124150158794e-16,
+      "maximum_symmetry_residual": 0.0,
+      "mean_random_direction_material_negative_probability": 0.10085868835449219,
+      "mean_random_direction_material_positive_probability": 0.6686515808105469,
+      "mean_random_direction_numerical_negative_probability": 0.19527626037597656,
+      "mean_random_direction_numerical_positive_probability": 0.8047237396240234,
+      "negative_to_positive_spectral_mass_ratio": 0.7271840039678088,
+      "normalized_maximum_eigenvalue_quantiles": {
+        "q10": 3.2738174700948783,
+        "q50": 3.670541052177053,
+        "q90": 4.2752763631340445
+      },
+      "normalized_minimum_eigenvalue_quantiles": {
+        "q10": -3.160252583977069,
+        "q50": -2.6266901343393245,
+        "q90": -2.2397722080656095
+      },
+      "paired_reduction": 0.10568341912966832,
+      "pooled_random_direction_relative_advantage_quantiles": {
+        "q01": -0.1808681670030072,
+        "q05": -0.09519239770744638,
+        "q50": 0.1023888309330632,
+        "q95": 0.31642176781819964,
+        "q99": 0.41727862762347223
+      },
+      "random_direction_mean_score_error": 6.137821569284201e-07,
+      "random_direction_mean_score_error_z": 0.8545481727859782,
+      "sampled_random_direction_mean_score": 0.000445354021451428,
+      "samples_per_group": 128,
+      "seed": 0,
+      "stored_baseline_numerator_relative_error": 1.7999488323626947e-06,
+      "stored_candidate_numerator_relative_error": 1.6004849937508213e-06,
+      "stored_paired_reduction": 0.10568359751377199,
+      "summed_trace": 7.286624080601081,
+      "summed_trace_reconciliation_error": 3.552713678800501e-15,
+      "top_five_percent_groups_share_of_positive_trace": 0.08738017684082365,
+      "top_one_group_share_of_positive_trace": 0.013170749626712632,
+      "total_negative_spectral_mass": 19.42230863073923,
+      "total_positive_spectral_mass": 26.70893271134031
+    },
+    {
+      "baseline": "mse_s1",
+      "candidate": "dpsae_w0.03125_s1",
+      "conditional_mc_se_random_direction_material_positive": 0.0006293013575486839,
+      "conditional_mc_se_random_direction_mean_score": 7.183028886566611e-07,
+      "conditional_mc_se_random_direction_numerical_positive": 0.0005220732418820262,
+      "expected_random_direction_mean_score": 0.00047921244040918164,
+      "fraction_groups_material_psd_dominance": 0.0,
+      "fraction_groups_materially_indefinite": 1.0,
+      "fraction_groups_numerically_positive_trace": 1.0,
+      "group_reduction_quantiles": {
+        "q10": 0.08431540556129775,
+        "q25": 0.09605320095007915,
+        "q50": 0.11246442490558732,
+        "q75": 0.12662525014082018,
+        "q90": 0.14443616147633376
+      },
+      "groups": 128,
+      "headline_distortion_difference": 0.00450235586333853,
+      "largest_negative_mode_share_quantiles": {
+        "q10": 0.06497823670506478,
+        "q50": 0.07303227484226227,
+        "q90": 0.0841549962759018
+      },
+      "largest_positive_mode_share_quantiles": {
+        "q10": 0.06697454303503036,
+        "q50": 0.07382433488965034,
+        "q90": 0.08614824190735816
+      },
+      "maximum_group_trace_reconciliation_error": 1.6653345369377348e-16,
+      "maximum_symmetry_residual": 0.0,
+      "mean_random_direction_material_negative_probability": 0.08809280395507812,
+      "mean_random_direction_material_positive_probability": 0.6925010681152344,
+      "mean_random_direction_numerical_negative_probability": 0.177459716796875,
+      "mean_random_direction_numerical_positive_probability": 0.822540283203125,
+      "negative_to_positive_spectral_mass_ratio": 0.7091503677143544,
+      "normalized_maximum_eigenvalue_quantiles": {
+        "q10": 3.266587737020799,
+        "q50": 3.6916432747508603,
+        "q90": 4.4797189255873535
+      },
+      "normalized_minimum_eigenvalue_quantiles": {
+        "q10": -3.1102500016844785,
+        "q50": -2.5907784283586235,
+        "q90": -2.183197131051381
+      },
+      "paired_reduction": 0.11325606312513041,
+      "pooled_random_direction_relative_advantage_quantiles": {
+        "q01": -0.1695525149485387,
+        "q05": -0.08501265189768079,
+        "q50": 0.10953911628745058,
+        "q95": 0.3225382703955749,
+        "q99": 0.4257373684015188
+      },
+      "random_direction_mean_score_error": 8.117332446385393e-07,
+      "random_direction_mean_score_error_z": 1.130070973481128,
+      "sampled_random_direction_mean_score": 0.0004800241736538202,
+      "samples_per_group": 128,
+      "seed": 1,
+      "stored_baseline_numerator_relative_error": 1.7865392923111626e-06,
+      "stored_candidate_numerator_relative_error": 1.5828580898392003e-06,
+      "stored_paired_reduction": 0.11325624373848797,
+      "summed_trace": 7.851416623664032,
+      "summed_trace_reconciliation_error": 1.7763568394002505e-14,
+      "top_five_percent_groups_share_of_positive_trace": 0.08804502156202082,
+      "top_one_group_share_of_positive_trace": 0.01390791710141574,
+      "total_negative_spectral_mass": 19.1433454530956,
+      "total_positive_spectral_mass": 26.994762076759628
+    },
+    {
+      "baseline": "mse_s2",
+      "candidate": "dpsae_w0.03125_s2",
+      "conditional_mc_se_random_direction_material_positive": 0.0006325573194772005,
+      "conditional_mc_se_random_direction_mean_score": 7.144839935165254e-07,
+      "conditional_mc_se_random_direction_numerical_positive": 0.0005302332574501634,
+      "expected_random_direction_mean_score": 0.0004615368732174505,
+      "fraction_groups_material_psd_dominance": 0.0,
+      "fraction_groups_materially_indefinite": 1.0,
+      "fraction_groups_numerically_positive_trace": 1.0,
+      "group_reduction_quantiles": {
+        "q10": 0.069803384809688,
+        "q25": 0.08895371448847339,
+        "q50": 0.10924830939747707,
+        "q75": 0.1259250153251153,
+        "q90": 0.14728447258304797
+      },
+      "groups": 128,
+      "headline_distortion_difference": 0.004336288192984286,
+      "largest_negative_mode_share_quantiles": {
+        "q10": 0.06465329080820084,
+        "q50": 0.07287398353219032,
+        "q90": 0.08151997402310371
+      },
+      "largest_positive_mode_share_quantiles": {
+        "q10": 0.06755895614624023,
+        "q50": 0.07439816370606422,
+        "q90": 0.08582540601491928
+      },
+      "maximum_group_trace_reconciliation_error": 2.0816681711721685e-16,
+      "maximum_symmetry_residual": 0.0,
+      "mean_random_direction_material_negative_probability": 0.09685897827148438,
+      "mean_random_direction_material_positive_probability": 0.6781673431396484,
+      "mean_random_direction_numerical_negative_probability": 0.18880462646484375,
+      "mean_random_direction_numerical_positive_probability": 0.8111953735351562,
+      "negative_to_positive_spectral_mass_ratio": 0.7170777172636664,
+      "normalized_maximum_eigenvalue_quantiles": {
+        "q10": 3.2378408001550696,
+        "q50": 3.6501765655896534,
+        "q90": 4.282773854086394
+      },
+      "normalized_minimum_eigenvalue_quantiles": {
+        "q10": -3.0186268817474207,
+        "q50": -2.578778006110717,
+        "q90": -2.1316031094416994
+      },
+      "paired_reduction": 0.10905614394660146,
+      "pooled_random_direction_relative_advantage_quantiles": {
+        "q01": -0.17924839229744507,
+        "q05": -0.0918659961554002,
+        "q50": 0.10519027038443567,
+        "q95": 0.31759833573925805,
+        "q99": 0.4199486019697662
+      },
+      "random_direction_mean_score_error": -3.636550923005787e-08,
+      "random_direction_mean_score_error_z": -0.05089758421469349,
+      "sampled_random_direction_mean_score": 0.00046150050770822046,
+      "samples_per_group": 128,
+      "seed": 2,
+      "stored_baseline_numerator_relative_error": 1.7888137397625409e-06,
+      "stored_candidate_numerator_relative_error": 1.56654331170449e-06,
+      "stored_paired_reduction": 0.10905634197738379,
+      "summed_trace": 7.561820130794709,
+      "summed_trace_reconciliation_error": 8.881784197001252e-15,
+      "top_five_percent_groups_share_of_positive_trace": 0.09694346623854837,
+      "top_one_group_share_of_positive_trace": 0.016622685602971365,
+      "total_negative_spectral_mass": 19.16573224740332,
+      "total_positive_spectral_mass": 26.727552378198027
+    }
+  ],
+  "wall_seconds": 5.585629224777222
+}

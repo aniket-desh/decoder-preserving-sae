@@ -1,0 +1,2788 @@
+{
+  "checkpoints": [
+    {
+      "all_checks_pass": false,
+      "autograd_spot_check": {
+        "cosine": 0.9999999403953552,
+        "denominator": 3532.186279296875,
+        "loss": 0.039322610944509506,
+        "relative_error": 2.1978476070216857e-06,
+        "target_rms_clamp_hits": 0
+      },
+      "checks": {
+        "autograd_cosine": true,
+        "autograd_relative_error": true,
+        "autograd_spot_check_present": true,
+        "denominator_clamp_never_fired": true,
+        "exact_gradient_norms_resolved": true,
+        "median_denominator_cv": true,
+        "p90_denominator_cv": true,
+        "reconstruction_fixed_denominator": false,
+        "reconstruction_median_bias": false,
+        "reconstruction_median_cosine": true,
+        "reconstruction_median_norm_ratio": true,
+        "reconstruction_p10_cosine": true,
+        "reconstruction_p90_bias": false,
+        "reconstruction_positive_dot": true,
+        "reconstruction_rmse_slope": true,
+        "row_gram_fixed_denominator": false,
+        "row_gram_median_bias": false,
+        "row_gram_median_cosine": true,
+        "row_gram_median_norm_ratio": true,
+        "row_gram_p10_cosine": true,
+        "row_gram_p90_bias": false,
+        "row_gram_positive_dot": true,
+        "row_gram_rmse_slope": true,
+        "target_rms_clamp_never_fired": true
+      },
+      "denominator_cv": {
+        "median": 0.011430523288480685,
+        "p90": 0.01215581238893198
+      },
+      "expected_gradient_fidelity_status": "PASS",
+      "expected_gradient_gate_basis": "The fixed-denominator control is exactly unbiased when target normalization never clamps. Centered paired-block confidence balls therefore bound the expected sampled-gradient bias directly. A relative bias bound epsilon also implies norm ratio in [1-epsilon, 1+epsilon] and cosine at least sqrt(1-epsilon^2).",
+      "expected_gradient_gate_details": {
+        "reconstruction": {
+          "paired_median_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          },
+          "paired_p90_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          }
+        },
+        "row_gram": {
+          "paired_median_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          },
+          "paired_p90_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          }
+        }
+      },
+      "expected_gradient_inference": {
+        "reconstruction": {
+          "median_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.9874915189327141,
+              0.9936115318950494
+            ],
+            "point": 0.999976470024542
+          },
+          "median_expected_norm_ratio": {
+            "hierarchical_bootstrap95": [
+              1.0066140789976106,
+              1.0132627399862961
+            ],
+            "point": 1.00021693284813
+          },
+          "median_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.11358787949547534,
+              0.15960885256234048
+            ],
+            "point": 0.006689096345524524
+          },
+          "median_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.004506759796989125,
+              0.004927233083690615
+            ],
+            "point": 0.00464764251510561
+          },
+          "median_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.001195070301926468,
+              0.0020283764797592017
+            ],
+            "point": 0.0
+          },
+          "p10_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.9802819437827013,
+              0.9911079529089094
+            ],
+            "point": 0.9999311339790004
+          },
+          "p90_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.13432248179464767,
+              0.20133098696128657
+            ],
+            "point": 0.011919278889757372
+          },
+          "p90_fixed_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.1342908711126594,
+              0.2013425680897546
+            ],
+            "point": 0.011764071055491097
+          },
+          "p90_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.004778258388214019,
+              0.005375947949123946
+            ],
+            "point": 0.005254889359112322
+          },
+          "p90_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.001561093668694006,
+              0.002989772233178426
+            ],
+            "point": 0.00019223850418626062
+          },
+          "paired_confidence_balls_by_batch": [
+            {
+              "batch": 0,
+              "bootstrap_radius": 0.0026672783606509765,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0019008091310298665,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004568087491680843
+            },
+            {
+              "batch": 1,
+              "bootstrap_radius": 0.0031099563607352777,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001678425388460171,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004788381749195448
+            },
+            {
+              "batch": 2,
+              "bootstrap_radius": 0.003137312352075306,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0018473622205977369,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004984674572673043
+            },
+            {
+              "batch": 3,
+              "bootstrap_radius": 0.0036152906797912213,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001669622544481021,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.005284913224272242
+            },
+            {
+              "batch": 4,
+              "bootstrap_radius": 0.0028132745140049906,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016038510852144936,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004417125599219484
+            },
+            {
+              "batch": 5,
+              "bootstrap_radius": 0.0031198888625379377,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0014882480282921334,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004608136890830071
+            },
+            {
+              "batch": 6,
+              "bootstrap_radius": 0.0027728766955606838,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0015188971008812586,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004291773796441942
+            },
+            {
+              "batch": 7,
+              "bootstrap_radius": 0.0031050680008704087,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017647235938377777,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004869791594708186
+            },
+            {
+              "batch": 8,
+              "bootstrap_radius": 0.0028224836101460034,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016370413240471074,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004459524934193111
+            },
+            {
+              "batch": 9,
+              "bootstrap_radius": 0.0030650084672262227,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016221396721549258,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.0046871481393811485
+            },
+            {
+              "batch": 10,
+              "bootstrap_radius": 0.002890691355088948,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016633033046961896,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.0045539946597851376
+            },
+            {
+              "batch": 11,
+              "bootstrap_radius": 0.003663954984798306,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017119929643256398,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.005375947949123946
+            }
+          ]
+        },
+        "row_gram": {
+          "median_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.9870780421327223,
+              0.9934000412728922
+            ],
+            "point": 0.9999875557571254
+          },
+          "median_expected_norm_ratio": {
+            "hierarchical_bootstrap95": [
+              1.0068683584858151,
+              1.0137664779176785
+            ],
+            "point": 1.0003530139118273
+          },
+          "median_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.11549266931091655,
+              0.16231806205747426
+            ],
+            "point": 0.0036331877969552114
+          },
+          "median_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.00457028499490577,
+              0.004972190675813145
+            ],
+            "point": 0.004699508100220046
+          },
+          "median_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.0012208785520822119,
+              0.002058939087384546
+            ],
+            "point": 0.0
+          },
+          "p10_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.9796449457520866,
+              0.9908401269181082
+            ],
+            "point": 0.9998686425583838
+          },
+          "p90_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.13635057581480634,
+              0.2047636011296875
+            ],
+            "point": 0.016226155812345416
+          },
+          "p90_fixed_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.13632030978630755,
+              0.2046332529391404
+            ],
+            "point": 0.016200617906081995
+          },
+          "p90_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.0048409233244627965,
+              0.005440105151793759
+            ],
+            "point": 0.005283718316114464
+          },
+          "p90_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.0015871124878789015,
+              0.0030151923054836443
+            ],
+            "point": 0.00010467627486364316
+          },
+          "paired_confidence_balls_by_batch": [
+            {
+              "batch": 0,
+              "bootstrap_radius": 0.0026966708612176944,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001934912439533627,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004631583300751321
+            },
+            {
+              "batch": 1,
+              "bootstrap_radius": 0.0031431837067592565,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017071507329080352,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004850334439667292
+            },
+            {
+              "batch": 2,
+              "bootstrap_radius": 0.0031631949497707714,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0018620043934392482,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.00502519934321002
+            },
+            {
+              "batch": 3,
+              "bootstrap_radius": 0.003623039091073574,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001689403555363607,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.00531244264643718
+            },
+            {
+              "batch": 4,
+              "bootstrap_radius": 0.0028342123906032234,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016315874959470125,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.0044657998865502355
+            },
+            {
+              "batch": 5,
+              "bootstrap_radius": 0.0031368858793882092,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0015059070334295414,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004642792912817751
+            },
+            {
+              "batch": 6,
+              "bootstrap_radius": 0.0027932364241684197,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0015443070791033011,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.00433754350327172
+            },
+            {
+              "batch": 7,
+              "bootstrap_radius": 0.003124790210160271,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001794391798256,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.0049191820084162705
+            },
+            {
+              "batch": 8,
+              "bootstrap_radius": 0.002865625842249137,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016803490857677796,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004545974928016916
+            },
+            {
+              "batch": 9,
+              "bootstrap_radius": 0.0030929018856151558,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016633214020071846,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.00475622328762234
+            },
+            {
+              "batch": 10,
+              "bootstrap_radius": 0.0029228012067566917,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016717938550379304,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004594595061794622
+            },
+            {
+              "batch": 11,
+              "bootstrap_radius": 0.0036933161604032314,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017467889913905278,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.005440105151793759
+            }
+          ]
+        }
+      },
+      "finite_bank_point_gate_pass": false,
+      "method": "mse",
+      "minimum_exact_gradient_norm": 7.811368463996091e-05,
+      "model": "mse_s0",
+      "probes": 16,
+      "summaries": {
+        "reconstruction": {
+          "maximum_fixed_denominator_mean_error_over_resolution": 1.0056450346350043,
+          "median_mean_gradient_cosine": 0.990503125420817,
+          "median_norm_ratio": 1.0097528418722963,
+          "median_relative_mean_bias": 0.1387669291928628,
+          "median_rmse_log_slope": -0.5000521614345415,
+          "p10_mean_gradient_cosine": 0.9903262741927386,
+          "p90_relative_mean_bias": 0.1402500828406483,
+          "pooled_individual_positive_dot_fraction": 1.0
+        },
+        "row_gram": {
+          "maximum_fixed_denominator_mean_error_over_resolution": 1.0055222894261395,
+          "median_mean_gradient_cosine": 0.9901984621351647,
+          "median_norm_ratio": 1.0101607589399313,
+          "median_relative_mean_bias": 0.14123242676084244,
+          "median_rmse_log_slope": -0.5002019717925028,
+          "p10_mean_gradient_cosine": 0.9900824364941481,
+          "p90_relative_mean_bias": 0.14203699804883235,
+          "pooled_individual_positive_dot_fraction": 1.0
+        }
+      }
+    },
+    {
+      "all_checks_pass": false,
+      "autograd_spot_check": {
+        "cosine": 1.0,
+        "denominator": 3532.186279296875,
+        "loss": 0.03489335626363754,
+        "relative_error": 2.3638608581677545e-06,
+        "target_rms_clamp_hits": 0
+      },
+      "checks": {
+        "autograd_cosine": true,
+        "autograd_relative_error": true,
+        "autograd_spot_check_present": true,
+        "denominator_clamp_never_fired": true,
+        "exact_gradient_norms_resolved": true,
+        "median_denominator_cv": true,
+        "p90_denominator_cv": true,
+        "reconstruction_fixed_denominator": false,
+        "reconstruction_median_bias": false,
+        "reconstruction_median_cosine": true,
+        "reconstruction_median_norm_ratio": true,
+        "reconstruction_p10_cosine": true,
+        "reconstruction_p90_bias": false,
+        "reconstruction_positive_dot": true,
+        "reconstruction_rmse_slope": true,
+        "row_gram_fixed_denominator": false,
+        "row_gram_median_bias": false,
+        "row_gram_median_cosine": true,
+        "row_gram_median_norm_ratio": true,
+        "row_gram_p10_cosine": true,
+        "row_gram_p90_bias": false,
+        "row_gram_positive_dot": true,
+        "row_gram_rmse_slope": true,
+        "target_rms_clamp_never_fired": true
+      },
+      "denominator_cv": {
+        "median": 0.011430523288480685,
+        "p90": 0.01215581238893198
+      },
+      "expected_gradient_fidelity_status": "PASS",
+      "expected_gradient_gate_basis": "The fixed-denominator control is exactly unbiased when target normalization never clamps. Centered paired-block confidence balls therefore bound the expected sampled-gradient bias directly. A relative bias bound epsilon also implies norm ratio in [1-epsilon, 1+epsilon] and cosine at least sqrt(1-epsilon^2).",
+      "expected_gradient_gate_details": {
+        "reconstruction": {
+          "paired_median_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          },
+          "paired_p90_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          }
+        },
+        "row_gram": {
+          "paired_median_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          },
+          "paired_p90_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          }
+        }
+      },
+      "expected_gradient_inference": {
+        "reconstruction": {
+          "median_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.988199720019714,
+              0.993984190799855
+            ],
+            "point": 0.9999942305993539
+          },
+          "median_expected_norm_ratio": {
+            "hierarchical_bootstrap95": [
+              1.0062658583444415,
+              1.0123669960928654
+            ],
+            "point": 1.000540831131687
+          },
+          "median_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.11019115095166349,
+              0.15499054549925892
+            ],
+            "point": 0.0035547124748485127
+          },
+          "median_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.004404713598060828,
+              0.004824834186531415
+            ],
+            "point": 0.004557563533520675
+          },
+          "median_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.0011531811515026259,
+              0.001981715717920368
+            ],
+            "point": 0.0
+          },
+          "p10_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.98140770994357,
+              0.9916166734708531
+            ],
+            "point": 0.999891421163324
+          },
+          "p90_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.130290461132878,
+              0.19541341040475696
+            ],
+            "point": 0.014693224905631257
+          },
+          "p90_fixed_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.13025963134303872,
+              0.19535381776389787
+            ],
+            "point": 0.014618872141725655
+          },
+          "p90_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.004668728155070492,
+              0.005272564162411101
+            ],
+            "point": 0.005163083831489345
+          },
+          "p90_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.0015124462078819434,
+              0.0029328068688666926
+            ],
+            "point": 0.00011270238403090417
+          },
+          "paired_confidence_balls_by_batch": [
+            {
+              "batch": 0,
+              "bootstrap_radius": 0.002616232166058755,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0018725392958831898,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004488771461941945
+            },
+            {
+              "batch": 1,
+              "bootstrap_radius": 0.003047923634534966,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016295839856499657,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004677507620184932
+            },
+            {
+              "batch": 2,
+              "bootstrap_radius": 0.003084703599418747,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017951990804536747,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004879902679872422
+            },
+            {
+              "batch": 3,
+              "bootstrap_radius": 0.003571688150718571,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016228602531726548,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.005194548403891225
+            },
+            {
+              "batch": 4,
+              "bootstrap_radius": 0.0027527722970821116,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001559782000264265,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004312554297346376
+            },
+            {
+              "batch": 5,
+              "bootstrap_radius": 0.003077528129911293,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0014478859680895333,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004525414098000826
+            },
+            {
+              "batch": 6,
+              "bootstrap_radius": 0.002734310928442601,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0014807777360162807,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004215088664458882
+            },
+            {
+              "batch": 7,
+              "bootstrap_radius": 0.0030500931654116295,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017196725277787792,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004769765693190408
+            },
+            {
+              "batch": 8,
+              "bootstrap_radius": 0.0027694813609904605,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0015904531498645443,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004359934510855005
+            },
+            {
+              "batch": 9,
+              "bootstrap_radius": 0.003012848331923245,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0015768646371172796,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004589712969040524
+            },
+            {
+              "batch": 10,
+              "bootstrap_radius": 0.0028355456689116605,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.00161394701635499,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.00444949268526665
+            },
+            {
+              "batch": 11,
+              "bootstrap_radius": 0.0036092822911234245,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016632818712876763,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.005272564162411101
+            }
+          ]
+        },
+        "row_gram": {
+          "median_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.9875668128915172,
+              0.9936615176296353
+            ],
+            "point": 0.9999910381969948
+          },
+          "median_expected_norm_ratio": {
+            "hierarchical_bootstrap95": [
+              1.0065233027412235,
+              1.013125022958597
+            ],
+            "point": 1.0006417477642329
+          },
+          "median_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.11314391457432704,
+              0.15913820277647264
+            ],
+            "point": 0.003111411069715851
+          },
+          "median_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.004492442192859358,
+              0.004899929280355905
+            ],
+            "point": 0.004638706378015074
+          },
+          "median_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.0011912582138231512,
+              0.002026581046162921
+            ],
+            "point": 0.0
+          },
+          "p10_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.9804057983491892,
+              0.9911881050915549
+            ],
+            "point": 0.999911616069714
+          },
+          "p90_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.1337292699667695,
+              0.2006330024583167
+            ],
+            "point": 0.013325490373171652
+          },
+          "p90_fixed_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.1336825628605081,
+              0.2006343115806005
+            ],
+            "point": 0.013331505806571057
+          },
+          "p90_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.004762779089704753,
+              0.005372791490034015
+            ],
+            "point": 0.005218492300431564
+          },
+          "p90_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.0015514379958115408,
+              0.0029835257597624495
+            ],
+            "point": 9.024455884817876e-05
+          },
+          "paired_confidence_balls_by_batch": [
+            {
+              "batch": 0,
+              "bootstrap_radius": 0.0026589949315551,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0019173551718161676,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004576350103371268
+            },
+            {
+              "batch": 1,
+              "bootstrap_radius": 0.0030969323753845006,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.00167343645358784,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004770368828972341
+            },
+            {
+              "batch": 2,
+              "bootstrap_radius": 0.0031262690457339276,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0018208693717086542,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004947138417442582
+            },
+            {
+              "batch": 3,
+              "bootstrap_radius": 0.003597008136786158,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001651634595088626,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.005248642731874784
+            },
+            {
+              "batch": 4,
+              "bootstrap_radius": 0.002794099786814524,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016037720070712473,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004397871793885772
+            },
+            {
+              "batch": 5,
+              "bootstrap_radius": 0.0031026270240639563,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0014803142956697313,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.0045829413197336875
+            },
+            {
+              "batch": 6,
+              "bootstrap_radius": 0.0027654919508658155,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0015176481360934786,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004283140086959294
+            },
+            {
+              "batch": 7,
+              "bootstrap_radius": 0.0030906961131486788,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017620240301205498,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.0048527201432692285
+            },
+            {
+              "batch": 8,
+              "bootstrap_radius": 0.0028245268528449344,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016453609287060233,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004469887781550958
+            },
+            {
+              "batch": 9,
+              "bootstrap_radius": 0.00306149622660818,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016329752096882807,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004694471436296461
+            },
+            {
+              "batch": 10,
+              "bootstrap_radius": 0.002877478642350008,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016375179618177505,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004514996604167759
+            },
+            {
+              "batch": 11,
+              "bootstrap_radius": 0.0036568370929713143,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017159543970627009,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.005372791490034015
+            }
+          ]
+        }
+      },
+      "finite_bank_point_gate_pass": false,
+      "method": "dpsae",
+      "minimum_exact_gradient_norm": 7.263082658942511e-05,
+      "model": "dpsae_w0.03125_s0",
+      "probes": 16,
+      "summaries": {
+        "reconstruction": {
+          "maximum_fixed_denominator_mean_error_over_resolution": 1.0059368612752402,
+          "median_mean_gradient_cosine": 0.9910495220890215,
+          "median_norm_ratio": 1.0094916718216267,
+          "median_relative_mean_bias": 0.1347073956870617,
+          "median_rmse_log_slope": -0.5001401920049908,
+          "p10_mean_gradient_cosine": 0.990872716165232,
+          "p90_relative_mean_bias": 0.13622370025130462,
+          "pooled_individual_positive_dot_fraction": 1.0
+        },
+        "row_gram": {
+          "maximum_fixed_denominator_mean_error_over_resolution": 1.009642609253007,
+          "median_mean_gradient_cosine": 0.9906125685213245,
+          "median_norm_ratio": 1.010134565260492,
+          "median_relative_mean_bias": 0.13804191061158305,
+          "median_rmse_log_slope": -0.5004042880882074,
+          "p10_mean_gradient_cosine": 0.9904635614092041,
+          "p90_relative_mean_bias": 0.13939231741363384,
+          "pooled_individual_positive_dot_fraction": 1.0
+        }
+      }
+    },
+    {
+      "all_checks_pass": false,
+      "autograd_spot_check": {
+        "cosine": 1.0,
+        "denominator": 3532.186279296875,
+        "loss": 0.03966911509633064,
+        "relative_error": 2.1827290765941143e-06,
+        "target_rms_clamp_hits": 0
+      },
+      "checks": {
+        "autograd_cosine": true,
+        "autograd_relative_error": true,
+        "autograd_spot_check_present": true,
+        "denominator_clamp_never_fired": true,
+        "exact_gradient_norms_resolved": true,
+        "median_denominator_cv": true,
+        "p90_denominator_cv": true,
+        "reconstruction_fixed_denominator": false,
+        "reconstruction_median_bias": false,
+        "reconstruction_median_cosine": true,
+        "reconstruction_median_norm_ratio": true,
+        "reconstruction_p10_cosine": true,
+        "reconstruction_p90_bias": false,
+        "reconstruction_positive_dot": true,
+        "reconstruction_rmse_slope": true,
+        "row_gram_fixed_denominator": false,
+        "row_gram_median_bias": false,
+        "row_gram_median_cosine": true,
+        "row_gram_median_norm_ratio": true,
+        "row_gram_p10_cosine": true,
+        "row_gram_p90_bias": false,
+        "row_gram_positive_dot": true,
+        "row_gram_rmse_slope": true,
+        "target_rms_clamp_never_fired": true
+      },
+      "denominator_cv": {
+        "median": 0.011430523288480685,
+        "p90": 0.01215581238893198
+      },
+      "expected_gradient_fidelity_status": "PASS",
+      "expected_gradient_gate_basis": "The fixed-denominator control is exactly unbiased when target normalization never clamps. Centered paired-block confidence balls therefore bound the expected sampled-gradient bias directly. A relative bias bound epsilon also implies norm ratio in [1-epsilon, 1+epsilon] and cosine at least sqrt(1-epsilon^2).",
+      "expected_gradient_gate_details": {
+        "reconstruction": {
+          "paired_median_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          },
+          "paired_p90_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          }
+        },
+        "row_gram": {
+          "paired_median_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          },
+          "paired_p90_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          }
+        }
+      },
+      "expected_gradient_inference": {
+        "reconstruction": {
+          "median_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.9874420375858004,
+              0.9935832446588586
+            ],
+            "point": 0.9999784020272374
+          },
+          "median_expected_norm_ratio": {
+            "hierarchical_bootstrap95": [
+              1.0064311062917453,
+              1.012995500847681
+            ],
+            "point": 1.0001382766825428
+          },
+          "median_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.1138300488363496,
+              0.1598947330972232
+            ],
+            "point": 0.006631069978488019
+          },
+          "median_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.00451277602575882,
+              0.0049270719628704465
+            ],
+            "point": 0.004652576462500961
+          },
+          "median_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.0011970107077325948,
+              0.0020329038339180574
+            ],
+            "point": 0.0
+          },
+          "p10_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.9802594278849415,
+              0.991086571836617
+            ],
+            "point": 0.9998987705330705
+          },
+          "p90_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.1344145214534529,
+              0.20161901804296417
+            ],
+            "point": 0.014239611541778635
+          },
+          "p90_fixed_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.13443364729427082,
+              0.20139976970382123
+            ],
+            "point": 0.014273885432932962
+          },
+          "p90_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.004776874598283397,
+              0.005378621954120378
+            ],
+            "point": 0.005254042942642201
+          },
+          "p90_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.0015616815895275304,
+              0.0029866744217845486
+            ],
+            "point": 0.0001499568703462906
+          },
+          "paired_confidence_balls_by_batch": [
+            {
+              "batch": 0,
+              "bootstrap_radius": 0.002663692032787861,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0019049401579622756,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004568632190750137
+            },
+            {
+              "batch": 1,
+              "bootstrap_radius": 0.0031082682124216245,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016780155715993318,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004786283784020956
+            },
+            {
+              "batch": 2,
+              "bootstrap_radius": 0.003136523879395468,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001844452300560713,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004980976179956181
+            },
+            {
+              "batch": 3,
+              "bootstrap_radius": 0.003609465109646978,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016749185844047807,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.005284383694051759
+            },
+            {
+              "batch": 4,
+              "bootstrap_radius": 0.002817683017164772,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016048274639324058,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004422510481097178
+            },
+            {
+              "batch": 5,
+              "bootstrap_radius": 0.003123891777504899,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0014890692208516557,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004612960998356555
+            },
+            {
+              "batch": 6,
+              "bootstrap_radius": 0.002772681378156878,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001518557078042128,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004291238456199006
+            },
+            {
+              "batch": 7,
+              "bootstrap_radius": 0.0031071614388459953,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017660063069387154,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004873167745784711
+            },
+            {
+              "batch": 8,
+              "bootstrap_radius": 0.00283017868703669,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001637736650465446,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004467915337502136
+            },
+            {
+              "batch": 9,
+              "bootstrap_radius": 0.0030669227683840492,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016252691582613191,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004692191926645368
+            },
+            {
+              "batch": 10,
+              "bootstrap_radius": 0.0028908213726510368,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016668153413644667,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004557636714015503
+            },
+            {
+              "batch": 11,
+              "bootstrap_radius": 0.003661309235847676,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017173127182727023,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.005378621954120378
+            }
+          ]
+        },
+        "row_gram": {
+          "median_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.987035449220397,
+              0.9933733673127252
+            ],
+            "point": 0.9999666486263301
+          },
+          "median_expected_norm_ratio": {
+            "hierarchical_bootstrap95": [
+              1.0066986421162332,
+              1.0135543176914
+            ],
+            "point": 1.0003916884632726
+          },
+          "median_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.11571116788707056,
+              0.16258267824363776
+            ],
+            "point": 0.008181701869123696
+          },
+          "median_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.004570860053765342,
+              0.004965775983317749
+            ],
+            "point": 0.004703004482974589
+          },
+          "median_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.0012227891288303257,
+              0.002058890381808353
+            ],
+            "point": 0.0
+          },
+          "p10_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.9796323898721357,
+              0.9908071872250632
+            ],
+            "point": 0.9998433423715033
+          },
+          "p90_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.13661630549147036,
+              0.20479977346063946
+            ],
+            "point": 0.01771171889100362
+          },
+          "p90_fixed_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.13655924821773693,
+              0.2046382431460579
+            ],
+            "point": 0.017711177889539118
+          },
+          "p90_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.0048422112318228855,
+              0.005438343343225231
+            ],
+            "point": 0.005286241369028538
+          },
+          "p90_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.00158649281136178,
+              0.0030149565870212103
+            ],
+            "point": 0.00013030328157304728
+          },
+          "paired_confidence_balls_by_batch": [
+            {
+              "batch": 0,
+              "bootstrap_radius": 0.002686659646274571,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0019338863812517829,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004620546027526354
+            },
+            {
+              "batch": 1,
+              "bootstrap_radius": 0.0031415474925430105,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001710251153246866,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.0048517986457898765
+            },
+            {
+              "batch": 2,
+              "bootstrap_radius": 0.0031654693560799487,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0018557942098896883,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.005021263565969637
+            },
+            {
+              "batch": 3,
+              "bootstrap_radius": 0.0036214173122353648,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016942660349108284,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.005315683347146194
+            },
+            {
+              "batch": 4,
+              "bootstrap_radius": 0.0028336223832038207,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016313382402455407,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004464960623449361
+            },
+            {
+              "batch": 5,
+              "bootstrap_radius": 0.003141357452983313,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0015087270068459046,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004650084459829218
+            },
+            {
+              "batch": 6,
+              "bootstrap_radius": 0.0027909570002542833,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001541300560913196,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.00433225756116748
+            },
+            {
+              "batch": 7,
+              "bootstrap_radius": 0.003116318777665475,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017939696230003844,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.0049102884006658595
+            },
+            {
+              "batch": 8,
+              "bootstrap_radius": 0.002869344292613864,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016760228565939719,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004545367149207836
+            },
+            {
+              "batch": 9,
+              "bootstrap_radius": 0.0030902675519808246,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016656569541391377,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004755924506119962
+            },
+            {
+              "batch": 10,
+              "bootstrap_radius": 0.002920233134955729,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.00167611982336712,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004596352958322849
+            },
+            {
+              "batch": 11,
+              "bootstrap_radius": 0.00369075320267074,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017475901405544915,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.005438343343225231
+            }
+          ]
+        }
+      },
+      "finite_bank_point_gate_pass": false,
+      "method": "mse",
+      "minimum_exact_gradient_norm": 7.837361583205753e-05,
+      "model": "mse_s1",
+      "probes": 16,
+      "summaries": {
+        "reconstruction": {
+          "maximum_fixed_denominator_mean_error_over_resolution": 1.0064650877842212,
+          "median_mean_gradient_cosine": 0.9904569919175599,
+          "median_norm_ratio": 1.0096754362777909,
+          "median_relative_mean_bias": 0.13912531261609096,
+          "median_rmse_log_slope": -0.5002619769983447,
+          "p10_mean_gradient_cosine": 0.9903759887316735,
+          "p90_relative_mean_bias": 0.13996241153618033,
+          "pooled_individual_positive_dot_fraction": 1.0
+        },
+        "row_gram": {
+          "maximum_fixed_denominator_mean_error_over_resolution": 1.008274341334611,
+          "median_mean_gradient_cosine": 0.9901651701184133,
+          "median_norm_ratio": 1.010310131741182,
+          "median_relative_mean_bias": 0.14136470310703325,
+          "median_rmse_log_slope": -0.5004989251615439,
+          "p10_mean_gradient_cosine": 0.9900467205644715,
+          "p90_relative_mean_bias": 0.1422262549604867,
+          "pooled_individual_positive_dot_fraction": 1.0
+        }
+      }
+    },
+    {
+      "all_checks_pass": false,
+      "autograd_spot_check": {
+        "cosine": 0.9999999403953552,
+        "denominator": 3532.186279296875,
+        "loss": 0.035396650433540344,
+        "relative_error": 2.3287682324735215e-06,
+        "target_rms_clamp_hits": 0
+      },
+      "checks": {
+        "autograd_cosine": true,
+        "autograd_relative_error": true,
+        "autograd_spot_check_present": true,
+        "denominator_clamp_never_fired": true,
+        "exact_gradient_norms_resolved": true,
+        "median_denominator_cv": true,
+        "p90_denominator_cv": true,
+        "reconstruction_fixed_denominator": false,
+        "reconstruction_median_bias": false,
+        "reconstruction_median_cosine": true,
+        "reconstruction_median_norm_ratio": true,
+        "reconstruction_p10_cosine": true,
+        "reconstruction_p90_bias": false,
+        "reconstruction_positive_dot": true,
+        "reconstruction_rmse_slope": true,
+        "row_gram_fixed_denominator": false,
+        "row_gram_median_bias": false,
+        "row_gram_median_cosine": true,
+        "row_gram_median_norm_ratio": true,
+        "row_gram_p10_cosine": true,
+        "row_gram_p90_bias": false,
+        "row_gram_positive_dot": true,
+        "row_gram_rmse_slope": true,
+        "target_rms_clamp_never_fired": true
+      },
+      "denominator_cv": {
+        "median": 0.011430523288480685,
+        "p90": 0.01215581238893198
+      },
+      "expected_gradient_fidelity_status": "PASS",
+      "expected_gradient_gate_basis": "The fixed-denominator control is exactly unbiased when target normalization never clamps. Centered paired-block confidence balls therefore bound the expected sampled-gradient bias directly. A relative bias bound epsilon also implies norm ratio in [1-epsilon, 1+epsilon] and cosine at least sqrt(1-epsilon^2).",
+      "expected_gradient_gate_details": {
+        "reconstruction": {
+          "paired_median_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          },
+          "paired_p90_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          }
+        },
+        "row_gram": {
+          "paired_median_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          },
+          "paired_p90_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          }
+        }
+      },
+      "expected_gradient_inference": {
+        "reconstruction": {
+          "median_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.9882040790920453,
+              0.9939812282624125
+            ],
+            "point": 0.9999920892012972
+          },
+          "median_expected_norm_ratio": {
+            "hierarchical_bootstrap95": [
+              1.0062104285379139,
+              1.012381319879197
+            ],
+            "point": 1.0002768590814233
+          },
+          "median_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.1102362034875276,
+              0.15491861764521536
+            ],
+            "point": 0.004037135432423629
+          },
+          "median_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.004401098752870661,
+              0.004818102834200867
+            ],
+            "point": 0.004556439230065875
+          },
+          "median_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.0011492583641999907,
+              0.001980107186375644
+            ],
+            "point": 0.0
+          },
+          "p10_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.9813958673959788,
+              0.991622683136375
+            ],
+            "point": 0.999937391059787
+          },
+          "p90_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.13036485136059747,
+              0.19525786062804362
+            ],
+            "point": 0.01129593677804301
+          },
+          "p90_fixed_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.1302933564444736,
+              0.1953793395305691
+            ],
+            "point": 0.01123129644638724
+          },
+          "p90_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.004671043512994143,
+              0.005272747491392728
+            ],
+            "point": 0.005145778472248379
+          },
+          "p90_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.0015113742544255967,
+              0.002927162309028064
+            ],
+            "point": 0.00011257358418903984
+          },
+          "paired_confidence_balls_by_batch": [
+            {
+              "batch": 0,
+              "bootstrap_radius": 0.002611057626257016,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0018672688564634202,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004478326482720436
+            },
+            {
+              "batch": 1,
+              "bootstrap_radius": 0.0030531706669813894,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001626699037898799,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004679869704880189
+            },
+            {
+              "batch": 2,
+              "bootstrap_radius": 0.003072681712510904,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017919119496395167,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004864593662150421
+            },
+            {
+              "batch": 3,
+              "bootstrap_radius": 0.003558994470388343,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001618026758537586,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.005177021228925929
+            },
+            {
+              "batch": 4,
+              "bootstrap_radius": 0.0027487514680973155,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0015585250248960857,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004307276492993401
+            },
+            {
+              "batch": 5,
+              "bootstrap_radius": 0.0030778801287523077,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001443390545359709,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004521270674112017
+            },
+            {
+              "batch": 6,
+              "bootstrap_radius": 0.0027280415336200276,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001480280273142093,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004208321806762121
+            },
+            {
+              "batch": 7,
+              "bootstrap_radius": 0.0030532321452729403,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017183798609783723,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.0047716120062513126
+            },
+            {
+              "batch": 8,
+              "bootstrap_radius": 0.002762824649102092,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0015851848606721784,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.0043480095097742704
+            },
+            {
+              "batch": 9,
+              "bootstrap_radius": 0.003013167193918443,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0015784405921012888,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004591607786019732
+            },
+            {
+              "batch": 10,
+              "bootstrap_radius": 0.0028357334059051944,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016184545900618558,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.00445418799596705
+            },
+            {
+              "batch": 11,
+              "bootstrap_radius": 0.0036093181940423493,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016634292973503788,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.005272747491392728
+            }
+          ]
+        },
+        "row_gram": {
+          "median_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.987580755453586,
+              0.9936648407532969
+            ],
+            "point": 0.9999882724141158
+          },
+          "median_expected_norm_ratio": {
+            "hierarchical_bootstrap95": [
+              1.0065431214124767,
+              1.0131673955830798
+            ],
+            "point": 0.9999641471877085
+          },
+          "median_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.1131192242486914,
+              0.15905211825794247
+            ],
+            "point": 0.004823709160726904
+          },
+          "median_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.004489560291488406,
+              0.004891230347353633
+            ],
+            "point": 0.004641571181709784
+          },
+          "median_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.0011876504019533675,
+              0.002023924289452641
+            ],
+            "point": 0.0
+          },
+          "p10_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.9804173921287586,
+              0.9911864936753264
+            ],
+            "point": 0.9998703533678834
+          },
+          "p90_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.1336942558458974,
+              0.20052202740778818
+            ],
+            "point": 0.01609877115320678
+          },
+          "p90_fixed_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.133664394652257,
+              0.20047085859768268
+            ],
+            "point": 0.015966807417337893
+          },
+          "p90_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.004766865836296738,
+              0.005375618512485364
+            ],
+            "point": 0.005208099553996824
+          },
+          "p90_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.0015526025965515566,
+              0.0029795435187705667
+            ],
+            "point": 0.0
+          },
+          "paired_confidence_balls_by_batch": [
+            {
+              "batch": 0,
+              "bootstrap_radius": 0.0026552042288150927,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0019121066397596088,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.0045673108685747015
+            },
+            {
+              "batch": 1,
+              "bootstrap_radius": 0.003102419061683349,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016714643606883788,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.0047738834223717275
+            },
+            {
+              "batch": 2,
+              "bootstrap_radius": 0.003112543611729405,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001820632075749312,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004933175687478717
+            },
+            {
+              "batch": 3,
+              "bootstrap_radius": 0.0035899234535103296,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001648723196766284,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.005238646650276613
+            },
+            {
+              "batch": 4,
+              "bootstrap_radius": 0.0027883334908458753,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001600820920104776,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004389154410950651
+            },
+            {
+              "batch": 5,
+              "bootstrap_radius": 0.0031040211461187414,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001475413655678991,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004579434801797733
+            },
+            {
+              "batch": 6,
+              "bootstrap_radius": 0.0027615849133539702,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0015203694699462789,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004281954383300249
+            },
+            {
+              "batch": 7,
+              "bootstrap_radius": 0.0030909467707043417,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017583382365242068,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.0048492850072285485
+            },
+            {
+              "batch": 8,
+              "bootstrap_radius": 0.0028197356264619447,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001639625438742779,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004459361065204724
+            },
+            {
+              "batch": 9,
+              "bootstrap_radius": 0.0030707719501174183,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016329356115044173,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.0047037075616218355
+            },
+            {
+              "batch": 10,
+              "bootstrap_radius": 0.002878390839634386,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016413686781377023,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004519759517772088
+            },
+            {
+              "batch": 11,
+              "bootstrap_radius": 0.003659060756027906,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017165577564574573,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.005375618512485364
+            }
+          ]
+        }
+      },
+      "finite_bank_point_gate_pass": false,
+      "method": "dpsae",
+      "minimum_exact_gradient_norm": 7.273950591394834e-05,
+      "model": "dpsae_w0.03125_s1",
+      "probes": 16,
+      "summaries": {
+        "reconstruction": {
+          "maximum_fixed_denominator_mean_error_over_resolution": 1.0064513143417433,
+          "median_mean_gradient_cosine": 0.9910485802782885,
+          "median_norm_ratio": 1.0092370232769161,
+          "median_relative_mean_bias": 0.13468820871878595,
+          "median_rmse_log_slope": -0.5001320687081299,
+          "p10_mean_gradient_cosine": 0.990851143462764,
+          "p90_relative_mean_bias": 0.1363538174776079,
+          "pooled_individual_positive_dot_fraction": 1.0
+        },
+        "row_gram": {
+          "maximum_fixed_denominator_mean_error_over_resolution": 1.0069993998877236,
+          "median_mean_gradient_cosine": 0.990595228164137,
+          "median_norm_ratio": 1.009398541464499,
+          "median_relative_mean_bias": 0.13820617180008835,
+          "median_rmse_log_slope": -0.5002985013011517,
+          "p10_mean_gradient_cosine": 0.9904184956532223,
+          "p90_relative_mean_bias": 0.13941181266351033,
+          "pooled_individual_positive_dot_fraction": 1.0
+        }
+      }
+    },
+    {
+      "all_checks_pass": false,
+      "autograd_spot_check": {
+        "cosine": 1.0000001192092896,
+        "denominator": 3532.186279296875,
+        "loss": 0.03898492455482483,
+        "relative_error": 2.222453304057126e-06,
+        "target_rms_clamp_hits": 0
+      },
+      "checks": {
+        "autograd_cosine": true,
+        "autograd_relative_error": true,
+        "autograd_spot_check_present": true,
+        "denominator_clamp_never_fired": true,
+        "exact_gradient_norms_resolved": true,
+        "median_denominator_cv": true,
+        "p90_denominator_cv": true,
+        "reconstruction_fixed_denominator": false,
+        "reconstruction_median_bias": false,
+        "reconstruction_median_cosine": true,
+        "reconstruction_median_norm_ratio": true,
+        "reconstruction_p10_cosine": true,
+        "reconstruction_p90_bias": false,
+        "reconstruction_positive_dot": true,
+        "reconstruction_rmse_slope": true,
+        "row_gram_fixed_denominator": false,
+        "row_gram_median_bias": false,
+        "row_gram_median_cosine": true,
+        "row_gram_median_norm_ratio": true,
+        "row_gram_p10_cosine": true,
+        "row_gram_p90_bias": false,
+        "row_gram_positive_dot": true,
+        "row_gram_rmse_slope": true,
+        "target_rms_clamp_never_fired": true
+      },
+      "denominator_cv": {
+        "median": 0.011430523288480685,
+        "p90": 0.01215581238893198
+      },
+      "expected_gradient_fidelity_status": "PASS",
+      "expected_gradient_gate_basis": "The fixed-denominator control is exactly unbiased when target normalization never clamps. Centered paired-block confidence balls therefore bound the expected sampled-gradient bias directly. A relative bias bound epsilon also implies norm ratio in [1-epsilon, 1+epsilon] and cosine at least sqrt(1-epsilon^2).",
+      "expected_gradient_gate_details": {
+        "reconstruction": {
+          "paired_median_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          },
+          "paired_p90_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          }
+        },
+        "row_gram": {
+          "paired_median_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          },
+          "paired_p90_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          }
+        }
+      },
+      "expected_gradient_inference": {
+        "reconstruction": {
+          "median_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.9874641563924594,
+              0.99359356428626
+            ],
+            "point": 0.9999656708186864
+          },
+          "median_expected_norm_ratio": {
+            "hierarchical_bootstrap95": [
+              1.006667599108915,
+              1.0133239469264443
+            ],
+            "point": 1.0004084222426761
+          },
+          "median_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.11376946686956511,
+              0.1598603229467528
+            ],
+            "point": 0.007865577628075198
+          },
+          "median_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.004509079136624246,
+              0.004924515423963087
+            ],
+            "point": 0.004649568630808239
+          },
+          "median_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.001195581422097929,
+              0.002029027146746522
+            ],
+            "point": 0.0
+          },
+          "p10_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.9802527403338948,
+              0.9910885443971312
+            ],
+            "point": 0.9999047747975853
+          },
+          "p90_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.1344397401970956,
+              0.20150720783743256
+            ],
+            "point": 0.01383458041055103
+          },
+          "p90_fixed_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.1344209159980112,
+              0.20149017251257256
+            ],
+            "point": 0.01367978545411899
+          },
+          "p90_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.004779672804912338,
+              0.00537351696082601
+            ],
+            "point": 0.005254647980644071
+          },
+          "p90_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.0015592331543378929,
+              0.002987201713874764
+            ],
+            "point": 0.00016200496005807288
+          },
+          "paired_confidence_balls_by_batch": [
+            {
+              "batch": 0,
+              "bootstrap_radius": 0.0026691821946515817,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001900722707531015,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.0045699049021825965
+            },
+            {
+              "batch": 1,
+              "bootstrap_radius": 0.0031109018425447854,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016783907711212678,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004789292613666053
+            },
+            {
+              "batch": 2,
+              "bootstrap_radius": 0.0031337379602952424,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0018455857148765473,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.00497932367517179
+            },
+            {
+              "batch": 3,
+              "bootstrap_radius": 0.0036191760161256295,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016660635540153611,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.005285239570140991
+            },
+            {
+              "batch": 4,
+              "bootstrap_radius": 0.0028123667808121304,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016039407463264742,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004416307527138605
+            },
+            {
+              "batch": 5,
+              "bootstrap_radius": 0.0031205974476468203,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0014854452878407586,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004606042735487579
+            },
+            {
+              "batch": 6,
+              "bootstrap_radius": 0.0027701266898378404,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001516718575255359,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004286845265093199
+            },
+            {
+              "batch": 7,
+              "bootstrap_radius": 0.0031068529211900333,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017628542515643504,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004869707172754384
+            },
+            {
+              "batch": 8,
+              "bootstrap_radius": 0.00283469507908795,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016375218582753864,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.0044722169373633365
+            },
+            {
+              "batch": 9,
+              "bootstrap_radius": 0.003068050060743226,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001625044465385673,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004693094526128899
+            },
+            {
+              "batch": 10,
+              "bootstrap_radius": 0.0028841226349096125,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016618187009755424,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004545941335885155
+            },
+            {
+              "batch": 11,
+              "bootstrap_radius": 0.003658613813552306,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001714903147273704,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.00537351696082601
+            }
+          ]
+        },
+        "row_gram": {
+          "median_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.9870616026583503,
+              0.9933876394273692
+            ],
+            "point": 0.9999608727036858
+          },
+          "median_expected_norm_ratio": {
+            "hierarchical_bootstrap95": [
+              1.006818968209799,
+              1.0136841161629422
+            ],
+            "point": 1.000741329090658
+          },
+          "median_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.11558690274726865,
+              0.1624902790530527
+            ],
+            "point": 0.006357449503359257
+          },
+          "median_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.0045667305049695945,
+              0.004965272313433548
+            ],
+            "point": 0.004700551639877143
+          },
+          "median_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.0012202022753722414,
+              0.002056143620826011
+            ],
+            "point": 0.0
+          },
+          "p10_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.979605803743703,
+              0.9908293628467172
+            ],
+            "point": 0.9998627454078693
+          },
+          "p90_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.13650671207511073,
+              0.2047261818356567
+            ],
+            "point": 0.016576433446897257
+          },
+          "p90_fixed_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.13642762064178252,
+              0.20490483715871036
+            ],
+            "point": 0.016637121933787576
+          },
+          "p90_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.00484145380423514,
+              0.005433792901730145
+            ],
+            "point": 0.005279679483173949
+          },
+          "p90_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.001583340982178497,
+              0.003017878116940035
+            ],
+            "point": 5.982370391999262e-05
+          },
+          "paired_confidence_balls_by_batch": [
+            {
+              "batch": 0,
+              "bootstrap_radius": 0.0026973998089632224,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0019328204000246636,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004630220208987886
+            },
+            {
+              "batch": 1,
+              "bootstrap_radius": 0.0031417664982561094,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017088397582967043,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004850606256552814
+            },
+            {
+              "batch": 2,
+              "bootstrap_radius": 0.003161832833017416,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0018557650366062977,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.005017597869623714
+            },
+            {
+              "batch": 3,
+              "bootstrap_radius": 0.003628863812900953,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016799358495563563,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.005308799662457309
+            },
+            {
+              "batch": 4,
+              "bootstrap_radius": 0.0028371797648797372,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016324304245445744,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004469610189424312
+            },
+            {
+              "batch": 5,
+              "bootstrap_radius": 0.0031372299129149178,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.00150479163346329,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004642021546378208
+            },
+            {
+              "batch": 6,
+              "bootstrap_radius": 0.0027871584981748287,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0015399415966894294,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004327100094864258
+            },
+            {
+              "batch": 7,
+              "bootstrap_radius": 0.0031222419125305416,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017907048447128402,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004912946757243382
+            },
+            {
+              "batch": 8,
+              "bootstrap_radius": 0.0028713625683133006,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001678825093201914,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004550187661515215
+            },
+            {
+              "batch": 9,
+              "bootstrap_radius": 0.003093375302383451,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016657064309926269,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004759081733376078
+            },
+            {
+              "batch": 10,
+              "bootstrap_radius": 0.0029141840330618044,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016690893153621703,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004583273348423974
+            },
+            {
+              "batch": 11,
+              "bootstrap_radius": 0.0036866627134104052,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017471301883197404,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.005433792901730145
+            }
+          ]
+        }
+      },
+      "finite_bank_point_gate_pass": false,
+      "method": "mse",
+      "minimum_exact_gradient_norm": 7.873828865865284e-05,
+      "model": "mse_s2",
+      "probes": 16,
+      "summaries": {
+        "reconstruction": {
+          "maximum_fixed_denominator_mean_error_over_resolution": 1.0069985885910746,
+          "median_mean_gradient_cosine": 0.9904595026217194,
+          "median_norm_ratio": 1.0101385124760214,
+          "median_relative_mean_bias": 0.13917294279334097,
+          "median_rmse_log_slope": -0.5003163801810728,
+          "p10_mean_gradient_cosine": 0.9903146627714102,
+          "p90_relative_mean_bias": 0.14023739133570554,
+          "pooled_individual_positive_dot_fraction": 1.0
+        },
+        "row_gram": {
+          "maximum_fixed_denominator_mean_error_over_resolution": 1.0067760644454196,
+          "median_mean_gradient_cosine": 0.990196912787622,
+          "median_norm_ratio": 1.0105863508179644,
+          "median_relative_mean_bias": 0.14116896062780968,
+          "median_rmse_log_slope": -0.5005919846388744,
+          "p10_mean_gradient_cosine": 0.9900214219860547,
+          "p90_relative_mean_bias": 0.14225706429531396,
+          "pooled_individual_positive_dot_fraction": 1.0
+        }
+      }
+    },
+    {
+      "all_checks_pass": false,
+      "autograd_spot_check": {
+        "cosine": 1.0,
+        "denominator": 3532.186279296875,
+        "loss": 0.03535151109099388,
+        "relative_error": 2.3180041353043634e-06,
+        "target_rms_clamp_hits": 0
+      },
+      "checks": {
+        "autograd_cosine": true,
+        "autograd_relative_error": true,
+        "autograd_spot_check_present": true,
+        "denominator_clamp_never_fired": true,
+        "exact_gradient_norms_resolved": true,
+        "median_denominator_cv": true,
+        "p90_denominator_cv": true,
+        "reconstruction_fixed_denominator": false,
+        "reconstruction_median_bias": false,
+        "reconstruction_median_cosine": true,
+        "reconstruction_median_norm_ratio": true,
+        "reconstruction_p10_cosine": true,
+        "reconstruction_p90_bias": false,
+        "reconstruction_positive_dot": true,
+        "reconstruction_rmse_slope": true,
+        "row_gram_fixed_denominator": false,
+        "row_gram_median_bias": false,
+        "row_gram_median_cosine": true,
+        "row_gram_median_norm_ratio": true,
+        "row_gram_p10_cosine": true,
+        "row_gram_p90_bias": false,
+        "row_gram_positive_dot": true,
+        "row_gram_rmse_slope": true,
+        "target_rms_clamp_never_fired": true
+      },
+      "denominator_cv": {
+        "median": 0.011430523288480685,
+        "p90": 0.01215581238893198
+      },
+      "expected_gradient_fidelity_status": "PASS",
+      "expected_gradient_gate_basis": "The fixed-denominator control is exactly unbiased when target normalization never clamps. Centered paired-block confidence balls therefore bound the expected sampled-gradient bias directly. A relative bias bound epsilon also implies norm ratio in [1-epsilon, 1+epsilon] and cosine at least sqrt(1-epsilon^2).",
+      "expected_gradient_gate_details": {
+        "reconstruction": {
+          "paired_median_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          },
+          "paired_p90_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          }
+        },
+        "row_gram": {
+          "paired_median_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          },
+          "paired_p90_bias_confidence_ball": {
+            "conservative_pass": true,
+            "decisive_fail": false
+          }
+        }
+      },
+      "expected_gradient_inference": {
+        "reconstruction": {
+          "median_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.9881640133060511,
+              0.9939513842726507
+            ],
+            "point": 0.999968166816323
+          },
+          "median_expected_norm_ratio": {
+            "hierarchical_bootstrap95": [
+              1.0060521279893537,
+              1.0123520056434998
+            ],
+            "point": 1.000378261052207
+          },
+          "median_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.11046994693879154,
+              0.1551418663745146
+            ],
+            "point": 0.007981465772704505
+          },
+          "median_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.004402780076183761,
+              0.0048285071621766975
+            ],
+            "point": 0.004558383647566835
+          },
+          "median_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.0011531229577094067,
+              0.0019822758230982757
+            ],
+            "point": 0.0
+          },
+          "p10_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.9813751744073466,
+              0.9915886734914225
+            ],
+            "point": 0.9999079471255806
+          },
+          "p90_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.13053418254135288,
+              0.19555656616387668
+            ],
+            "point": 0.013566520637757424
+          },
+          "p90_fixed_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.1304962915911589,
+              0.19548908000944065
+            ],
+            "point": 0.0135436565594771
+          },
+          "p90_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.004678840566168711,
+              0.0052810125908821955
+            ],
+            "point": 0.005155003054029898
+          },
+          "p90_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.001514154550701574,
+              0.002939470946018475
+            ],
+            "point": 0.00016779562709605977
+          },
+          "paired_confidence_balls_by_batch": [
+            {
+              "batch": 0,
+              "bootstrap_radius": 0.002624232260193339,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0018713856498470233,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004495617910040362
+            },
+            {
+              "batch": 1,
+              "bootstrap_radius": 0.0030586186959491077,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016297027875186265,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004688321483467734
+            },
+            {
+              "batch": 2,
+              "bootstrap_radius": 0.003080181361896716,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0018013685992833211,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004881549961180037
+            },
+            {
+              "batch": 3,
+              "bootstrap_radius": 0.003563586524310332,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016218002067028838,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.005185386731013215
+            },
+            {
+              "batch": 4,
+              "bootstrap_radius": 0.002750328000476679,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0015642759859814523,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004314603986458131
+            },
+            {
+              "batch": 5,
+              "bootstrap_radius": 0.0030777338231935064,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0014455211614626596,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.0045232549846561665
+            },
+            {
+              "batch": 6,
+              "bootstrap_radius": 0.002735988830725992,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0014766648827522495,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004212653713478241
+            },
+            {
+              "batch": 7,
+              "bootstrap_radius": 0.0030564347483254444,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017190296148479139,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004775464363173358
+            },
+            {
+              "batch": 8,
+              "bootstrap_radius": 0.0027600043225000375,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.00159522627801804,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004355230600518078
+            },
+            {
+              "batch": 9,
+              "bootstrap_radius": 0.0030163506620555012,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0015771616484220026,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004593512310477504
+            },
+            {
+              "batch": 10,
+              "bootstrap_radius": 0.0028336729678203605,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016166565840290844,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004450329551849445
+            },
+            {
+              "batch": 11,
+              "bootstrap_radius": 0.00361526446061134,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016657481302708556,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.0052810125908821955
+            }
+          ]
+        },
+        "row_gram": {
+          "median_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.9875426790235202,
+              0.9936315061230224
+            ],
+            "point": 0.9999618678828726
+          },
+          "median_expected_norm_ratio": {
+            "hierarchical_bootstrap95": [
+              1.0062686184479561,
+              1.0130020374875355
+            ],
+            "point": 1.0001882800668331
+          },
+          "median_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.11338596981062407,
+              0.15932235405216486
+            ],
+            "point": 0.008574966901331714
+          },
+          "median_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.0044917506913438,
+              0.004901536025574556
+            ],
+            "point": 0.0046413972069423125
+          },
+          "median_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.0011921817352792497,
+              0.002027137320939441
+            ],
+            "point": 0.0
+          },
+          "p10_expected_cosine": {
+            "hierarchical_bootstrap95": [
+              0.9803932022906204,
+              0.9911626958178481
+            ],
+            "point": 0.9998709993074151
+          },
+          "p90_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.13391837168122803,
+              0.20096563712704282
+            ],
+            "point": 0.01612938369730469
+          },
+          "p90_fixed_expected_relative_bias": {
+            "hierarchical_bootstrap95": [
+              0.1338599852930982,
+              0.2008176613984457
+            ],
+            "point": 0.01613555104253446
+          },
+          "p90_paired_confidence_upper": {
+            "hierarchical_bootstrap95": [
+              0.004773567332729276,
+              0.0053808618557570215
+            ],
+            "point": 0.005214334767045742
+          },
+          "p90_paired_self_normalization_bias": {
+            "hierarchical_bootstrap95": [
+              0.001553956590234655,
+              0.002981024440395467
+            ],
+            "point": 5.675638028873443e-05
+          },
+          "paired_confidence_balls_by_batch": [
+            {
+              "batch": 0,
+              "bootstrap_radius": 0.0026663879731997674,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0019131952867970775,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004579583259996845
+            },
+            {
+              "batch": 1,
+              "bootstrap_radius": 0.00310514382117268,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016764576699094531,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004781601491082133
+            },
+            {
+              "batch": 2,
+              "bootstrap_radius": 0.003122300655680562,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0018314407887189798,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004953741444399542
+            },
+            {
+              "batch": 3,
+              "bootstrap_radius": 0.003590277196226737,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016530123844463605,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.005243289580673097
+            },
+            {
+              "batch": 4,
+              "bootstrap_radius": 0.0027914804548177406,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016069112282169782,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004398391683034719
+            },
+            {
+              "batch": 5,
+              "bootstrap_radius": 0.0031016378310390297,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001479896675292037,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.0045815345063310664
+            },
+            {
+              "batch": 6,
+              "bootstrap_radius": 0.0027694932722091936,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0015160594354252893,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004285552707634483
+            },
+            {
+              "batch": 7,
+              "bootstrap_radius": 0.0030904566398477704,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017588739669018015,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004849330606749571
+            },
+            {
+              "batch": 8,
+              "bootstrap_radius": 0.0028172834041243445,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016500914025164698,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.0044673748066408146
+            },
+            {
+              "batch": 9,
+              "bootstrap_radius": 0.0030707264626932,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.001630533444860358,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.004701259907553558
+            },
+            {
+              "batch": 10,
+              "bootstrap_radius": 0.0028758944157029043,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0016402321603438815,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.0045161265760467854
+            },
+            {
+              "batch": 11,
+              "bootstrap_radius": 0.0036646363587729204,
+              "family_size": 24,
+              "familywise_confidence_level": 0.95,
+              "observed_relative_mean_norm": 0.0017162254969841008,
+              "per_member_quantile": 0.9979166666666667,
+              "upper_confidence_bound": 0.0053808618557570215
+            }
+          ]
+        }
+      },
+      "finite_bank_point_gate_pass": false,
+      "method": "dpsae",
+      "minimum_exact_gradient_norm": 7.307196294295138e-05,
+      "model": "dpsae_w0.03125_s2",
+      "probes": 16,
+      "summaries": {
+        "reconstruction": {
+          "maximum_fixed_denominator_mean_error_over_resolution": 1.005728572521263,
+          "median_mean_gradient_cosine": 0.9910135207894853,
+          "median_norm_ratio": 1.0094717860703768,
+          "median_relative_mean_bias": 0.13492463980795094,
+          "median_rmse_log_slope": -0.5002404888246793,
+          "p10_mean_gradient_cosine": 0.9908588448700023,
+          "p90_relative_mean_bias": 0.1362185665837149,
+          "pooled_individual_positive_dot_fraction": 1.0
+        },
+        "row_gram": {
+          "maximum_fixed_denominator_mean_error_over_resolution": 1.0067068225339948,
+          "median_mean_gradient_cosine": 0.9905319665175112,
+          "median_norm_ratio": 1.0096456877008382,
+          "median_relative_mean_bias": 0.13866879816245908,
+          "median_rmse_log_slope": -0.5005275172215167,
+          "p10_mean_gradient_cosine": 0.9904347272532399,
+          "p90_relative_mean_bias": 0.13920338506589514,
+          "pooled_individual_positive_dot_fraction": 1.0
+        }
+      }
+    }
+  ],
+  "complete": true,
+  "experiment": "finite_probe_gradient_fidelity_summary",
+  "full_dpsae_expected_gradient_fidelity_status": "PASS",
+  "full_dpsae_fidelity_gate": false,
+  "inputs": {
+    "dpsae_w0.03125_s0": {
+      "bytes": 573746,
+      "path": "/workspace/decoder-preserving-sae/artifacts/joint_audit_20260714_corrected/gradient_fidelity_dpsae_w0.03125_s0.json",
+      "sha256": "fff251f58c19dc6af45e93e64b94dda8ea49fff32d1cf99baf9bbb636cd925d3"
+    },
+    "dpsae_w0.03125_s1": {
+      "bytes": 572872,
+      "path": "/workspace/decoder-preserving-sae/artifacts/joint_audit_20260714_corrected/gradient_fidelity_dpsae_w0.03125_s1.json",
+      "sha256": "8813deae53836c36ebed96dc9183d1aaabc8fe4194b27f122db3fe9cbb4c686a"
+    },
+    "dpsae_w0.03125_s2": {
+      "bytes": 574045,
+      "path": "/workspace/decoder-preserving-sae/artifacts/joint_audit_20260714_corrected/gradient_fidelity_dpsae_w0.03125_s2.json",
+      "sha256": "02354ac8093add79bbe93241cbe98481aecf2bbd9fd33fb0c6cabb7646b94a43"
+    },
+    "mse_s0": {
+      "bytes": 571468,
+      "path": "/workspace/decoder-preserving-sae/artifacts/joint_audit_20260714_corrected/gradient_fidelity_mse_s0.json",
+      "sha256": "f9cee9f0c975845078d4b42bd9ec0a65549c933f1dc16336ef7858b7ef25cbd1"
+    },
+    "mse_s1": {
+      "bytes": 572522,
+      "path": "/workspace/decoder-preserving-sae/artifacts/joint_audit_20260714_corrected/gradient_fidelity_mse_s1.json",
+      "sha256": "d86cafea4568947751fc539e8533e92e7098cff6194de845b0d5c62b28a5a89b"
+    },
+    "mse_s2": {
+      "bytes": 572905,
+      "path": "/workspace/decoder-preserving-sae/artifacts/joint_audit_20260714_corrected/gradient_fidelity_mse_s2.json",
+      "sha256": "8d5f15615dfd9d95ee838d059a5654192ef6df6bc1b5493f1470d374aad84248"
+    }
+  },
+  "interpretation_boundary": "The implemented gradient is unbiased for the expected finite-probe self-normalized objective. Passing this audit supports numerical alignment with the identity-target gradient at m=16; it is not an exact finite-m unbiasedness theorem for the identity-target ratio. Expectation-level classification uses a centered paired block confidence ball for sampled-minus-fixed gradients; squared-bias U-statistics remain descriptive diagnostics near zero bias.",
+  "repository": {
+    "dirty": false,
+    "revision": "46eb22a25f2c796edcc95b81ee2545d634a1e09f",
+    "status": []
+  }
+}
