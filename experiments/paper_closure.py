@@ -185,6 +185,15 @@ def _checkpoint_specs_match(state: Mapping[str, Any], specs: list[SAETrainSpec])
         raise RuntimeError("checkpoint specs differ from the frozen frontier screen")
 
 
+def _checkpoint_contract_match(
+    state: Mapping[str, Any], contract: Mapping[str, Any]
+) -> None:
+    if "run_contract" not in state:
+        raise RuntimeError("checkpoint predates the immutable run contract")
+    if state["run_contract"] != contract:
+        raise RuntimeError("checkpoint run contract differs from this invocation")
+
+
 def _trim_jsonl(path: Path, maximum_step: int) -> None:
     if not path.exists():
         return
@@ -285,13 +294,46 @@ def frontier_train_screen(args: argparse.Namespace) -> None:
         1, int(source["training"]["checkpoint_tokens"]) // tokens_per_step
     )
     args.new_screen.mkdir(parents=True, exist_ok=True)
+    run_contract = {
+        "repository": repository_state(),
+        "inputs": {
+            "source_tokens": _input_record(args.source_tokens),
+            "source_calibration": _input_record(args.source_calibration),
+            "config": _input_record(args.config),
+            "source_config": _input_record(ROOT / config["source_config"]),
+            "trainer": _input_record(Path(__file__)),
+        },
+        "specs": [asdict(spec) for spec in specs],
+        "sparsity_mode": args.sparsity_mode,
+        "sparsity_parameters": {
+            "jump_relu_init_threshold": args.jump_relu_init_threshold,
+            "jump_relu_init_mode": args.jump_relu_init_mode,
+            "jump_relu_bandwidth": args.jump_relu_bandwidth,
+            "jump_relu_sparsity_weight": args.jump_relu_sparsity_weight,
+            "jump_relu_threshold_lr_multiplier": args.jump_relu_threshold_lr_multiplier,
+            "jump_relu_threshold_lr_multiplier_mse": args.jump_relu_threshold_lr_multiplier_mse,
+            "jump_relu_threshold_lr_multiplier_dpsae": args.jump_relu_threshold_lr_multiplier_dpsae,
+        },
+        "stream": {
+            "range_name": args.source_range_name,
+            "range": [source_range.start, source_range.stop],
+            "data_seed": data_seed,
+            "probe_seed_base": probe_seed_base,
+            "token_budget": token_budget,
+            "tokens_per_step": tokens_per_step,
+            "total_steps": total_steps,
+        },
+    }
     checkpoint = args.new_screen / "checkpoint.pt"
     start_step, tokens_seen = 0, 0
+    prior_training_seconds = 0.0
     if checkpoint.exists():
         state = torch.load(checkpoint, map_location=device, weights_only=False)
         _checkpoint_specs_match(state, specs)
+        _checkpoint_contract_match(state, run_contract)
         start_step, tokens_seen = fleet.load_state_dict(state)
         batcher.load_generator_state(state["batcher_generator_state"])
+        prior_training_seconds = float(state.get("cumulative_training_seconds", 0.0))
     log_path = args.new_screen / "training.jsonl"
     _trim_jsonl(log_path, start_step)
     target_steps = total_steps
@@ -328,19 +370,20 @@ def frontier_train_screen(args: argparse.Namespace) -> None:
         if step % checkpoint_every == 0 or step == target_steps:
             state = fleet.state_dict(step=step, tokens_seen=tokens_seen)
             state["batcher_generator_state"] = batcher.generator.get_state()
+            state["run_contract"] = run_contract
+            state["cumulative_training_seconds"] = (
+                prior_training_seconds + time.monotonic() - started_training
+            )
             atomic_torch(checkpoint, state)
     if device.type == "cuda":
         resources["peak_allocated_gpu_gib"] = torch.cuda.max_memory_allocated(device) / 2**30
         if resources["peak_allocated_gpu_gib"] > args.maximum_peak_gpu_gib:
             raise RuntimeError("frontier screen exceeded the peak GPU allocation guard")
+    cumulative_training_seconds = prior_training_seconds + time.monotonic() - started_training
     common = {
         "repository": repository_state(),
-        "inputs": {
-            "source_tokens": _input_record(args.source_tokens),
-            "source_calibration": _input_record(args.source_calibration),
-            "config": _input_record(args.config),
-            "evaluator": _input_record(Path(__file__)),
-        },
+        "inputs": run_contract["inputs"],
+        "run_contract": run_contract,
         "specs": [asdict(spec) for spec in specs],
         "sparsity_mode": args.sparsity_mode,
         "stream": {
@@ -353,6 +396,8 @@ def frontier_train_screen(args: argparse.Namespace) -> None:
         },
         "tokens_seen": tokens_seen,
         "resources": resources,
+        "training_seconds_cumulative": cumulative_training_seconds,
+        "training_seconds_this_invocation": time.monotonic() - started_training,
         "wall_seconds": time.time() - started_at,
     }
     if args.sparsity_mode == "jump_relu":

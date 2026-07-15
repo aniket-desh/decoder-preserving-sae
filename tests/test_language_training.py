@@ -1,6 +1,7 @@
 import math
 
 import torch
+import dpsae.language_training as language_training
 
 from dpsae.language_training import (
     SAETrainSpec,
@@ -71,6 +72,32 @@ def test_training_fleet_updates_matched_models():
         "sparsity_config" not in payload for payload in fleet.export_models().values()
     )
     assert metrics["spectral_s0"]["static"] > 0
+
+
+def test_mse_only_training_skips_decoder_target_and_solve_work(monkeypatch):
+    def unexpected_solve(*_args, **_kwargs):
+        raise AssertionError("MSE-only training must not construct a ridge solve")
+
+    monkeypatch.setattr(language_training, "batched_ridge_predict", unexpected_solve)
+    fleet = TrainingFleet(
+        [SAETrainSpec("mse_s0", "mse", 0, 2)],
+        input_dim=6,
+        dictionary_size=12,
+        learning_rate=1e-3,
+        device=torch.device("cpu"),
+        dead_after_steps=100,
+    )
+
+    metrics = fleet.train_batch(
+        torch.randn(16, 6),
+        step=1,
+        ridge=0.2,
+        group_size=8,
+        probes=3,
+        probe_seed=4,
+    )
+
+    assert metrics["mse_s0"]["decoder"] == 0
 
 
 def test_training_fleet_supports_tokenwise_topk_and_exports_mode():

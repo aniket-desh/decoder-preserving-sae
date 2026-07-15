@@ -10,6 +10,7 @@ natural-text runner.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import subprocess
@@ -88,6 +89,14 @@ def atomic_torch(path: Path, value: Any) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     torch.save(value, temporary)
     temporary.replace(path)
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(8 * 1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def load_config(path: Path, *, root: Path = ROOT) -> dict[str, Any]:
@@ -263,11 +272,23 @@ def cache_natural(
         output = outputs[split]
         if output.exists():
             payload = torch.load(output, map_location="cpu", weights_only=False)
+            expected_range = [int(value) for value in config["fresh_corpus"][f"{split}_range"]]
+            expected_offset = int(config["fresh_corpus"]["token_offset"])
+            absolute_start = expected_offset + expected_range[0]
+            absolute_stop = expected_offset + expected_range[1]
             if (
                 payload.get("split") != split
+                or [int(value) for value in payload.get("token_range", ())]
+                != expected_range
+                or int(payload.get("token_offset", -1)) != expected_offset
+                or payload.get("normalized_with_sha256")
+                != sha256_file(paths.source_calibration)
+                or payload.get("repository") != config["repository"]
                 or payload["input_ids"].shape[0] != target_sequences
                 or payload["activations"].shape[:2] != payload["input_ids"].shape
                 or payload["starts"].shape != (target_sequences,)
+                or int(payload["starts"].min()) < absolute_start
+                or int(payload["starts"].max()) + sequence_length > absolute_stop
             ):
                 raise RuntimeError(f"incompatible immutable natural cache: {output}")
             continue
@@ -288,6 +309,8 @@ def cache_natural(
             "token_range": list(config["fresh_corpus"][f"{split}_range"]),
             "token_offset": int(config["fresh_corpus"]["token_offset"]),
             "normalized_with": str(paths.source_calibration),
+            "normalized_with_sha256": sha256_file(paths.source_calibration),
+            "repository": config["repository"],
         }
         atomic_torch(output, payload)
         print(f"cached {split}: {target_tokens:,} normalized tokens", flush=True)

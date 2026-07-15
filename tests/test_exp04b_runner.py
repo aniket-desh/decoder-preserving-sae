@@ -121,6 +121,7 @@ def test_natural_cache_contains_ids_normalized_activations_and_absolute_starts(
         paths.source_calibration,
     )
     config = {
+        "repository": {"revision": "test", "dirty": False, "status": []},
         "source": {"training": {"sequence_length": 4}},
         "fresh_corpus": {
             "token_offset": 100,
@@ -159,6 +160,10 @@ def test_natural_cache_contains_ids_normalized_activations_and_absolute_starts(
         assert payload["input_ids"].shape == (2, 4)
         assert payload["activations"].shape == (2, 4, 2)
         assert torch.equal(payload["starts"], torch.tensor([100, 104]))
+        assert payload["repository"] == config["repository"]
+        assert payload["normalized_with_sha256"] == runner.sha256_file(
+            paths.source_calibration
+        )
 
 
 def test_checkpoint_specs_are_validated_before_resume():

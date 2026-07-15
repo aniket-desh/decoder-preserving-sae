@@ -204,17 +204,25 @@ class TrainingFleet:
         if len({spec.k for spec in self.specs}) != 1:
             raise ValueError("a vectorized training fleet must share one k")
         groups = activations.shape[0] // group_size
-        generator = torch.Generator(device=self.device).manual_seed(probe_seed)
-        targets = torch.randn(
-            groups,
-            group_size,
-            probes,
-            generator=generator,
-            device=self.device,
-            dtype=torch.float32,
-        )
-        targets.div_(targets.square().mean(dim=1, keepdim=True).sqrt().clamp_min(1e-6))
-        grouped_original = activations.reshape(groups, group_size, -1)
+        dpsae_indices = [
+            index for index, spec in enumerate(self.specs) if spec.method == "dpsae"
+        ]
+        targets = None
+        grouped_original = None
+        if dpsae_indices:
+            generator = torch.Generator(device=self.device).manual_seed(probe_seed)
+            targets = torch.randn(
+                groups,
+                group_size,
+                probes,
+                generator=generator,
+                device=self.device,
+                dtype=torch.float32,
+            )
+            targets.div_(
+                targets.square().mean(dim=1, keepdim=True).sqrt().clamp_min(1e-6)
+            )
+            grouped_original = activations.reshape(groups, group_size, -1)
         models = [self.models[spec.name] for spec in self.specs]
         for model, optimizer in zip(models, self.optimizers.values()):
             model.train()
@@ -282,8 +290,8 @@ class TrainingFleet:
         residual = reconstruction - activations.unsqueeze(0)
         mse = residual.square().sum(dim=(1, 2)) / activations.square().sum().clamp_min(1e-12)
         decoder = torch.zeros(len(models), device=self.device)
-        dpsae_indices = [index for index, spec in enumerate(self.specs) if spec.method == "dpsae"]
         if dpsae_indices:
+            assert grouped_original is not None and targets is not None
             with torch.no_grad():
                 reference = batched_ridge_predict(grouped_original, targets, ridge)
                 denominator = reference.square().sum().clamp_min(1e-12)

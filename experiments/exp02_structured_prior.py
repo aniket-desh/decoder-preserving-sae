@@ -20,7 +20,6 @@ import torch
 from scipy.optimize import linear_sum_assignment
 
 from dpsae.decoder_distance import (
-    batched_ridge_predict,
     batched_sampled_decoder_loss,
     calibrate_ridge,
     effective_degrees_of_freedom,
@@ -257,6 +256,58 @@ def structured_loss(
     return batched_sampled_decoder_loss(
         x_grouped, reconstructed_grouped, targets, ridge=ridge
     )
+
+
+@torch.no_grad()
+def expected_structured_prior_diagnostics(
+    x: torch.Tensor,
+    task_latents: torch.Tensor,
+    *,
+    group_size: int,
+    task_weight: float,
+) -> dict[str, float]:
+    """Describe the task prior induced in expectation by ``structured_loss``.
+
+    Conditional on a group's protected-latent matrix ``L``, the Rademacher and
+    normalized Gaussian task draws induce
+
+        E[T T^T | L] = I + (task_weight / p) L L^T,
+
+    where ``p`` is the number of protected latent coordinates.  This matrix is
+    generally not diagonal in the left-singular basis of ``x``, so the exact
+    two-direction crossover is a scale reference rather than a predicted sparse
+    transition.
+    """
+
+    x_grouped = _grouped(x.double(), group_size)
+    latent_grouped = _grouped(task_latents.double(), group_size)
+    protected_dim = latent_grouped.shape[-1]
+    identity = torch.eye(group_size, dtype=torch.float64).expand(
+        x_grouped.shape[0], group_size, group_size
+    )
+    increment = (
+        float(task_weight)
+        / protected_dim
+        * (latent_grouped @ latent_grouped.transpose(-1, -2))
+    )
+    prior = identity + increment
+    sample_gram = x_grouped @ x_grouped.transpose(-1, -2)
+    commutator = sample_gram @ prior - prior @ sample_gram
+    normalizer = (
+        torch.linalg.matrix_norm(sample_gram, ord="fro", dim=(-2, -1))
+        * torch.linalg.matrix_norm(prior, ord="fro", dim=(-2, -1))
+    ).clamp_min(1e-30)
+    eigenvalues = torch.linalg.eigvalsh(prior)
+    extra_trace_ratio = increment.diagonal(dim1=-2, dim2=-1).sum(-1) / group_size
+    return {
+        "expected_prior_protected_dim": float(protected_dim),
+        "expected_prior_extra_trace_ratio_mean": float(extra_trace_ratio.mean()),
+        "expected_prior_min_eigenvalue_mean": float(eigenvalues[:, 0].mean()),
+        "expected_prior_max_eigenvalue_mean": float(eigenvalues[:, -1].mean()),
+        "expected_prior_normalized_commutator_mean": float(
+            (torch.linalg.matrix_norm(commutator, ord="fro", dim=(-2, -1)) / normalizer).mean()
+        ),
+    }
 
 
 @torch.no_grad()
@@ -559,8 +610,16 @@ def feature_recovery(
 
 
 def run_sparse(
-    config: dict[str, Any], seeds: list[int], task_weight: float
+    config: dict[str, Any],
+    seeds: list[int],
+    task_weight: float,
+    *,
+    methods: tuple[str, ...] = METHODS,
+    relative_weight: float | None = None,
 ) -> tuple[list, list, list, list]:
+    unknown = set(methods) - set(METHODS)
+    if not methods or unknown:
+        raise ValueError(f"methods must be a nonempty subset of {METHODS}; got {methods}")
     data_config = config["data"]
     sae_config = config["sae"]
     evaluation = config["evaluation"]
@@ -637,15 +696,23 @@ def run_sparse(
             task_weight=task_weight,
             seed=50_000 + seed,
         )
+        prior_diagnostics = expected_structured_prior_diagnostics(
+            train[calibration_indices],
+            train_protected[calibration_indices],
+            group_size=sae_config["geometry_group_size"],
+            task_weight=task_weight,
+        )
         calibrations.append(
             {
                 "seed": seed,
+                "relative_weight": relative_weight,
                 "ridge": ridge,
                 "dof_fraction": dof,
                 "task_weight": task_weight,
                 "train_rms": train_rms,
                 **{f"gamma_{key}": value for key, value in gammas.items()},
                 **calibration,
+                **prior_diagnostics,
             }
         )
         print(
@@ -670,7 +737,7 @@ def run_sparse(
             )
             group_only[group] = (raw - train_mean) / train_rms
 
-        for method in METHODS:
+        for method in methods:
             model, method_curves, elapsed = train_method(
                 method,
                 initial_state,
@@ -688,6 +755,9 @@ def run_sparse(
                 seed=seed,
                 validation_groups=evaluation["validation_geometry_groups"],
             )
+            for row in method_curves:
+                row["relative_weight"] = relative_weight
+                row["task_weight"] = task_weight
             curves.extend(method_curves)
             with torch.no_grad():
                 reconstruction, code = model(test)
@@ -695,6 +765,8 @@ def run_sparse(
                     {
                         "seed": seed,
                         "method": method,
+                        "relative_weight": relative_weight,
+                        "task_weight": task_weight,
                         "test_nmse": normalized_mse(test, reconstruction).item(),
                         "protected_decoder_distortion": exact_decoder_distortion(
                             test, reconstruction, test_targets, ridge=ridge,
@@ -729,6 +801,8 @@ def run_sparse(
                     {
                         "seed": seed,
                         "method": method,
+                        "relative_weight": relative_weight,
+                        "task_weight": task_weight,
                         "group": group,
                         "group_nmse": normalized_mse(
                             group_only[group], group_reconstruction
@@ -837,7 +911,7 @@ def plot_recovery(groups: list[dict[str, str]], figures: Path) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(6.8, 2.8))
     x_positions = np.arange(len(GROUPS))
     for ax, metric, title, ylabel in (
-        (axes[0], "matched_cosine", "Dictionary recovery", "Matched $|\cos|$"),
+        (axes[0], "matched_cosine", "Dictionary recovery", r"Matched $|\cos|$"),
         (axes[1], "support_f1", "Support recovery", "Support F1"),
     ):
         for method in METHODS:
