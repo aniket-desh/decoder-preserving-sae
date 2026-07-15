@@ -108,6 +108,34 @@
     "screen_tokens": 25000000,
     "screen_source_range": "screen",
     "screen_data_seed": 20260712,
-    "screen_probe_seed_base": 20260712
+    "screen_probe_seed_base": 20260712,
+    "full_horizon_weight_grid": {
+      "shared_threshold_lr_multiplier": 16.0,
+      "late_window_records": 40,
+      "maximum_absolute_late_half_shift": 0.75,
+      "maximum_absolute_l0_slope_per_million_tokens": 0.75,
+      "points": [
+        {
+          "weight": 2.0,
+          "models": "artifacts/joint_audit_20260714/jumprelu_full_weight2/models.pt",
+          "training_log": "artifacts/joint_audit_20260714/jumprelu_full_weight2/training.jsonl"
+        },
+        {
+          "weight": 4.0,
+          "models": "artifacts/joint_audit_20260714/jumprelu_full_weight4/models.pt",
+          "training_log": "artifacts/joint_audit_20260714/jumprelu_full_weight4/training.jsonl"
+        },
+        {
+          "weight": 8.0,
+          "models": "artifacts/joint_audit_20260714/jumprelu_full_weight8/models.pt",
+          "training_log": "artifacts/joint_audit_20260714/jumprelu_full_weight8/training.jsonl"
+        },
+        {
+          "weight": 16.0,
+          "models": "artifacts/joint_audit_20260714/jumprelu_full_weight16/models.pt",
+          "training_log": "artifacts/joint_audit_20260714/jumprelu_full_weight16/training.jsonl"
+        }
+      ]
+    }
   }
 }

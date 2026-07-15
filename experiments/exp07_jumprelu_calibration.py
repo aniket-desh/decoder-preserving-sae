@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import shutil
 import subprocess
 from pathlib import Path
@@ -355,9 +356,211 @@ def evaluate_pair(
     return result
 
 
+def late_l0_trajectory(
+    log_path: Path,
+    *,
+    records: int,
+) -> dict[str, dict[str, Any]]:
+    """Read only sparsity and health fields from a training log tail."""
+
+    if records < 4:
+        raise ValueError("late-window trajectory requires at least four records")
+    raw = [json.loads(line) for line in log_path.read_text().splitlines() if line]
+    if len(raw) < records:
+        raise ValueError(f"{log_path} has only {len(raw)} records")
+    tail = raw[-records:]
+    names = sorted(tail[0]["models"])
+    result = {}
+    for name in names:
+        values = torch.tensor(
+            [float(record["models"][name]["l0"]) for record in tail],
+            dtype=torch.float64,
+        )
+        tokens = torch.tensor(
+            [float(record["tokens_seen"]) for record in tail],
+            dtype=torch.float64,
+        )
+        centered_tokens = tokens - tokens.mean()
+        slope = float(
+            (centered_tokens * (values - values.mean())).sum()
+            / centered_tokens.square().sum().clamp_min(1e-30)
+            * 1_000_000
+        )
+        half = records // 2
+        first_mean = float(values[:half].mean())
+        second_mean = float(values[-half:].mean())
+        metrics = [record["models"][name] for record in tail]
+        result[name] = {
+            "records": records,
+            "tokens_start": int(tokens[0]),
+            "tokens_stop": int(tokens[-1]),
+            "l0_mean": float(values.mean()),
+            "l0_minimum": float(values.min()),
+            "l0_maximum": float(values.max()),
+            "late_half_shift": second_mean - first_mean,
+            "l0_slope_per_million_tokens": slope,
+            "dead_maximum": max(int(metric["dead"]) for metric in metrics),
+            "threshold_minimum": min(
+                float(metric["threshold_min"]) for metric in metrics
+            ),
+            "threshold_maximum": max(
+                float(metric["threshold_max"]) for metric in metrics
+            ),
+            "finite_health": all(
+                all(
+                    math.isfinite(float(metric[key]))
+                    for key in (
+                        "l0",
+                        "threshold_min",
+                        "threshold_mean",
+                        "threshold_max",
+                    )
+                )
+                for metric in metrics
+            ),
+        }
+    return result
+
+
+def evaluate_sparsity_weight_grid(
+    config: dict[str, Any],
+    output: Path,
+    *,
+    device: torch.device,
+    gpu_memory_fraction: float,
+    minimum_free_gib: float,
+) -> dict[str, Any]:
+    """Select a shared full-horizon JumpReLU sparsity weight using L0 only."""
+
+    settings = config["jump_relu_calibration"]
+    grid = settings["full_horizon_weight_grid"]
+    output.mkdir(parents=True, exist_ok=True)
+    free_gib = shutil.disk_usage(output).free / 2**30
+    if free_gib < minimum_free_gib:
+        raise RuntimeError(
+            f"only {free_gib:.2f} GiB free; guard requires {minimum_free_gib:.2f}"
+        )
+    if device.type == "cuda":
+        torch.cuda.set_per_process_memory_fraction(gpu_memory_fraction, device)
+        torch.cuda.reset_peak_memory_stats(device)
+    cache_path = ROOT / settings["cache"]
+    cache = torch.load(cache_path, map_location="cpu", weights_only=False)
+    low, high = map(float, settings["accepted_l0_interval"])
+    rows = []
+    inputs: dict[str, Any] = {"cache": input_record(cache_path)}
+    for index, point in enumerate(grid["points"]):
+        weight = float(point["weight"])
+        models_path = ROOT / point["models"]
+        log_path = ROOT / point["training_log"]
+        model_rows, _ = evaluate_models(
+            models_path,
+            cache,
+            settings,
+            device=device,
+            seed_offset=20_000 + 100 * index,
+        )
+        trajectories = late_l0_trajectory(
+            log_path,
+            records=int(grid["late_window_records"]),
+        )
+        by_name = {row["model"]: row for row in model_rows}
+        if set(by_name) != set(trajectories):
+            raise RuntimeError("training log and exported models do not match")
+        for name in sorted(by_name):
+            row = {"weight": weight, **by_name[name], **trajectories[name]}
+            row["l0_interval_in_band"] = bool(
+                low <= row["l0_ci95"][0] and row["l0_ci95"][1] <= high
+            )
+            row["late_drift_pass"] = bool(
+                abs(row["late_half_shift"])
+                <= float(grid["maximum_absolute_late_half_shift"])
+                and abs(row["l0_slope_per_million_tokens"])
+                <= float(grid["maximum_absolute_l0_slope_per_million_tokens"])
+            )
+            rows.append(row)
+        inputs[f"models_weight_{weight:g}"] = input_record(models_path)
+        inputs[f"training_log_weight_{weight:g}"] = input_record(log_path)
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
+    weight_gates = []
+    for point in grid["points"]:
+        weight = float(point["weight"])
+        pair = [row for row in rows if row["weight"] == weight]
+        by_method = {row["method"]: row for row in pair}
+        if set(by_method) != {"mse", "dpsae"}:
+            raise RuntimeError("every sparsity weight must contain one model per method")
+        gap = abs(by_method["mse"]["l0"] - by_method["dpsae"]["l0"])
+        checks = {
+            "both_l0_intervals_in_band": all(
+                row["l0_interval_in_band"] for row in pair
+            ),
+            "inter_method_l0_gap": gap
+            <= float(settings["maximum_inter_method_l0_gap"]),
+            "late_drift": all(row["late_drift_pass"] for row in pair),
+            "finite_health": all(
+                row["finite_state"] and row["finite_health"] for row in pair
+            ),
+        }
+        weight_gates.append(
+            {
+                "weight": weight,
+                "checks": checks,
+                "inter_method_l0_gap": gap,
+                "advance": all(checks.values()),
+            }
+        )
+    advancing = [row for row in weight_gates if row["advance"]]
+    selected = min(advancing, key=lambda row: row["weight"]) if advancing else None
+    result = {
+        "complete": True,
+        "experiment": "jumprelu_decoder_blind_full_horizon_weight_grid",
+        "rows": rows,
+        "weight_gates": weight_gates,
+        "selection": selected,
+        "selection_rule": (
+            "choose the smallest shared sparsity-loss weight whose held-out L0 "
+            "confidence intervals both lie in the frozen band, whose method gap "
+            "passes, and whose late L0 trajectory is stable; consult no task outcome"
+        ),
+        "outcomes_consulted": [
+            "held-out L0",
+            "late-window L0 trajectory",
+            "dead-feature count",
+            "threshold health",
+            "finite state",
+        ],
+        "outcomes_sealed": [
+            "NMSE",
+            "decoder distortion",
+            "language-model loss",
+        ],
+        "inputs": {
+            **inputs,
+            "config": input_record(Path(config["_config_path"])),
+            "evaluator": input_record(Path(__file__)),
+        },
+        "repository": repository_state(),
+        "resources": {
+            "device": str(device),
+            "free_gib_at_start": free_gib,
+            "gpu_memory_fraction_cap": (
+                gpu_memory_fraction if device.type == "cuda" else None
+            ),
+            "peak_allocated_gpu_gib": (
+                torch.cuda.max_memory_allocated(device) / 2**30
+                if device.type == "cuda"
+                else None
+            ),
+        },
+    }
+    atomic_json(output / "jump_relu_full_horizon_weight_grid.json", result)
+    return result
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=["grid", "pair"])
+    parser.add_argument("mode", choices=["grid", "pair", "weight-grid"])
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--models", type=Path)
@@ -381,7 +584,7 @@ def main() -> None:
     if args.mode == "grid":
         result = evaluate_grid(config, output, **common)
         print(json.dumps(result["selection"], indent=2), flush=True)
-    else:
+    elif args.mode == "pair":
         if args.models is None:
             raise ValueError("--models is required in pair mode")
         result = evaluate_pair(
@@ -392,6 +595,9 @@ def main() -> None:
             **common,
         )
         print(json.dumps({"advance": result["advance"], "checks": result["checks"]}, indent=2), flush=True)
+    else:
+        result = evaluate_sparsity_weight_grid(config, output, **common)
+        print(json.dumps({"selection": result["selection"]}, indent=2), flush=True)
 
 
 if __name__ == "__main__":
