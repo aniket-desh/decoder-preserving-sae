@@ -111,31 +111,53 @@
     "screen_probe_seed_base": 20260712,
     "full_horizon_weight_grid": {
       "shared_threshold_lr_multiplier": 16.0,
+      "token_budget": 25000000,
+      "source_range_name": "confirmation",
+      "data_seed": 31415926,
+      "probe_seed_base": 27182818,
+      "model_seed": 0,
+      "decoder_weight": 0.03125,
       "late_window_records": 40,
       "maximum_absolute_late_half_shift": 0.75,
       "maximum_absolute_l0_slope_per_million_tokens": 0.75,
+      "maximum_dead_fraction": 0.10,
       "points": [
         {
           "weight": 2.0,
           "models": "artifacts/joint_audit_20260714/jumprelu_full_weight2/models.pt",
-          "training_log": "artifacts/joint_audit_20260714/jumprelu_full_weight2/training.jsonl"
+          "training_log": "artifacts/joint_audit_20260714/jumprelu_full_weight2/training.jsonl",
+          "done": "artifacts/joint_audit_20260714/jumprelu_full_weight2/done.json"
         },
         {
           "weight": 4.0,
           "models": "artifacts/joint_audit_20260714/jumprelu_full_weight4/models.pt",
-          "training_log": "artifacts/joint_audit_20260714/jumprelu_full_weight4/training.jsonl"
+          "training_log": "artifacts/joint_audit_20260714/jumprelu_full_weight4/training.jsonl",
+          "done": "artifacts/joint_audit_20260714/jumprelu_full_weight4/done.json"
         },
         {
           "weight": 8.0,
           "models": "artifacts/joint_audit_20260714/jumprelu_full_weight8/models.pt",
-          "training_log": "artifacts/joint_audit_20260714/jumprelu_full_weight8/training.jsonl"
+          "training_log": "artifacts/joint_audit_20260714/jumprelu_full_weight8/training.jsonl",
+          "done": "artifacts/joint_audit_20260714/jumprelu_full_weight8/done.json"
         },
         {
           "weight": 16.0,
           "models": "artifacts/joint_audit_20260714/jumprelu_full_weight16/models.pt",
-          "training_log": "artifacts/joint_audit_20260714/jumprelu_full_weight16/training.jsonl"
+          "training_log": "artifacts/joint_audit_20260714/jumprelu_full_weight16/training.jsonl",
+          "done": "artifacts/joint_audit_20260714/jumprelu_full_weight16/done.json"
         }
-      ]
+      ],
+      "fresh_screen": {
+        "token_budget": 25000000,
+        "source_range_name": "robustness",
+        "data_seed": 16180339,
+        "probe_seed_base": 14142135,
+        "model_seed": 0,
+        "decoder_weight": 0.03125,
+        "models": "artifacts/joint_audit_20260714/jumprelu_full_horizon_screen/models.pt",
+        "training_log": "artifacts/joint_audit_20260714/jumprelu_full_horizon_screen/training.jsonl",
+        "done": "artifacts/joint_audit_20260714/jumprelu_full_horizon_screen/done.json"
+      }
     }
   }
 }

@@ -74,6 +74,37 @@ def bootstrap_mean_interval(
     }
 
 
+def bootstrap_paired_gap(
+    left: Tensor,
+    right: Tensor,
+    *,
+    samples: int,
+    seed: int,
+) -> dict[str, Any]:
+    left = left.detach().cpu().double().flatten()
+    right = right.detach().cpu().double().flatten()
+    if left.shape != right.shape:
+        raise ValueError("paired L0 sequences must have matching shapes")
+    difference = left - right
+    generator = torch.Generator().manual_seed(seed)
+    indices = torch.randint(
+        len(difference),
+        (samples, len(difference)),
+        generator=generator,
+    )
+    draws = difference[indices].mean(1)
+    return {
+        "signed_estimate": float(difference.mean()),
+        "absolute_estimate": abs(float(difference.mean())),
+        "signed_ci95": [
+            float(torch.quantile(draws, 0.025)),
+            float(torch.quantile(draws, 0.975)),
+        ],
+        "absolute_upper95": float(torch.quantile(draws.abs(), 0.95)),
+        "sequence_blocks": len(difference),
+    }
+
+
 @torch.inference_mode()
 def model_l0(
     payload: dict[str, Any],
@@ -92,6 +123,7 @@ def model_l0(
     finite = all(torch.isfinite(value).all() for value in model.state_dict().values())
     health = {
         "finite_state": bool(finite),
+        "dictionary_size": thresholds.numel(),
         "threshold_minimum": float(thresholds.min()),
         "threshold_mean": float(thresholds.mean()),
         "threshold_maximum": float(thresholds.max()),
@@ -113,6 +145,7 @@ def evaluate_models(
     activations = cache["activations"].flatten(0, 1)
     sequence_tokens = int(cache["activations"].shape[1])
     rows = []
+    sequence_l0_by_method = {}
     for index, (name, payload) in enumerate(sorted(payloads.items())):
         method = str(payload["spec"]["method"])
         if method not in {"mse", "dpsae"}:
@@ -126,6 +159,7 @@ def evaluate_models(
             batch_tokens=int(settings["evaluation_batch_tokens"]),
         )
         sequence_l0 = counts.reshape(-1, sequence_tokens).double().mean(1)
+        sequence_l0_by_method[method] = sequence_l0
         interval = bootstrap_mean_interval(
             sequence_l0,
             samples=int(settings["bootstrap_samples"]),
@@ -147,7 +181,16 @@ def evaluate_models(
         )
     if {row["method"] for row in rows} != {"mse", "dpsae"}:
         raise ValueError("calibration checkpoint must contain one MSE and one DPSAE model")
-    return rows, {"models": input_record(models_path)}
+    paired_gap = bootstrap_paired_gap(
+        sequence_l0_by_method["mse"],
+        sequence_l0_by_method["dpsae"],
+        samples=int(settings["bootstrap_samples"]),
+        seed=int(settings["bootstrap_seed"]) + seed_offset + 90_000,
+    )
+    return rows, {
+        "models": input_record(models_path),
+        "paired_l0_gap": paired_gap,
+    }
 
 
 def interpolate_bracket(
@@ -294,6 +337,8 @@ def evaluate_pair(
     models_path: Path,
     label: str,
     *,
+    training_log_path: Path | None,
+    run_done_path: Path | None,
     device: torch.device,
     gpu_memory_fraction: float,
     minimum_free_gib: float,
@@ -316,36 +361,110 @@ def evaluate_pair(
         seed_offset=10_000,
     )
     low, high = map(float, settings["accepted_l0_interval"])
-    by_method = {row["method"]: row for row in rows}
     point_estimates_pass = all(low <= row["l0"] <= high for row in rows)
     confidence_intervals_pass = all(
         low <= row["l0_ci95"][0] and row["l0_ci95"][1] <= high for row in rows
     )
-    inter_method_gap = abs(by_method["mse"]["l0"] - by_method["dpsae"]["l0"])
+    paired_gap = pair_inputs["paired_l0_gap"]
+    inter_method_gap = float(paired_gap["absolute_estimate"])
     finite = all(row["finite_state"] for row in rows)
+    checks = {
+        "point_estimates_in_band": point_estimates_pass,
+        "confidence_intervals_in_band": confidence_intervals_pass,
+        "inter_method_l0_gap_upper95": float(paired_gap["absolute_upper95"])
+        <= float(settings["maximum_inter_method_l0_gap"]),
+        "finite_states": finite,
+    }
+    trajectory = None
+    provenance = None
+    extra_inputs = {}
+    if (
+        label == "full_horizon_screen"
+        and training_log_path is None
+        and run_done_path is None
+    ):
+        fresh = settings["full_horizon_weight_grid"]["fresh_screen"]
+        training_log_path = ROOT / fresh["training_log"]
+        run_done_path = ROOT / fresh["done"]
+    if (training_log_path is None) != (run_done_path is None):
+        raise ValueError("training log and done metadata must be supplied together")
+    if training_log_path is not None and run_done_path is not None:
+        grid = settings["full_horizon_weight_grid"]
+        trajectory = late_l0_trajectory(
+            training_log_path,
+            records=int(grid["late_window_records"]),
+        )
+        by_name = {row["model"]: row for row in rows}
+        if set(by_name) != set(trajectory):
+            raise RuntimeError("training log and evaluated models do not match")
+        for name, values in trajectory.items():
+            values["dead_fraction_maximum"] = (
+                values["dead_maximum"] / by_name[name]["dictionary_size"]
+            )
+        checks["late_drift"] = all(
+            abs(values["late_half_shift"])
+            <= float(grid["maximum_absolute_late_half_shift"])
+            and abs(values["l0_slope_per_million_tokens"])
+            <= float(grid["maximum_absolute_l0_slope_per_million_tokens"])
+            for values in trajectory.values()
+        )
+        checks["dead_fraction"] = all(
+            values["dead_fraction_maximum"]
+            <= float(grid["maximum_dead_fraction"])
+            for values in trajectory.values()
+        )
+        checks["trajectory_finite_health"] = all(
+            values["finite_health"] for values in trajectory.values()
+        )
+        selection_path = output / "jump_relu_full_horizon_weight_grid.json"
+        selection = json.loads(selection_path.read_text())["selection"]
+        if selection is None:
+            raise RuntimeError("full-horizon screen has no selected calibration weight")
+        expected = {**grid, **grid["fresh_screen"]}
+        done = json.loads(run_done_path.read_text())
+        provenance = run_provenance_checks(
+            done,
+            weight=float(selection["weight"]),
+            expected=expected,
+        )
+        expected_models = ROOT / grid["fresh_screen"]["models"]
+        provenance["paths_match_frozen_screen"] = (
+            models_path.resolve() == expected_models.resolve()
+            and training_log_path.resolve()
+            == (ROOT / grid["fresh_screen"]["training_log"]).resolve()
+            and run_done_path.resolve()
+            == (ROOT / grid["fresh_screen"]["done"]).resolve()
+        )
+        checks["run_provenance"] = all(provenance.values())
+        extra_inputs = {
+            "training_log": input_record(training_log_path),
+            "run_done": input_record(run_done_path),
+            "weight_selection": input_record(selection_path),
+        }
     result = {
         "complete": True,
         "experiment": "jumprelu_decoder_blind_pair_gate",
         "label": label,
         "rows": rows,
-        "checks": {
-            "point_estimates_in_band": point_estimates_pass,
-            "confidence_intervals_in_band": confidence_intervals_pass,
-            "inter_method_l0_gap": inter_method_gap
-            <= float(settings["maximum_inter_method_l0_gap"]),
-            "finite_states": finite,
-        },
+        "checks": checks,
         "inter_method_l0_gap": inter_method_gap,
-        "advance": bool(
-            point_estimates_pass
-            and confidence_intervals_pass
-            and inter_method_gap <= float(settings["maximum_inter_method_l0_gap"])
-            and finite
-        ),
-        "outcomes_consulted": ["held-out L0", "threshold health", "finite state"],
+        "paired_l0_gap": paired_gap,
+        "trajectory": trajectory,
+        "provenance_checks": provenance,
+        "advance": all(checks.values()),
+        "outcomes_consulted": [
+            "held-out L0",
+            "paired L0 gap",
+            "late-window L0 trajectory when supplied",
+            "dead-feature count when supplied",
+            "threshold health",
+            "finite state",
+            "run provenance when supplied",
+        ],
         "outcomes_sealed": ["NMSE", "decoder distortion", "language-model loss"],
         "inputs": {
-            **pair_inputs,
+            "models": pair_inputs["models"],
+            **extra_inputs,
             "cache": input_record(cache_path),
             "config": input_record(Path(config["_config_path"])),
             "evaluator": input_record(Path(__file__)),
@@ -422,6 +541,45 @@ def late_l0_trajectory(
     return result
 
 
+def run_provenance_checks(
+    done: dict[str, Any],
+    *,
+    weight: float,
+    expected: dict[str, Any],
+) -> dict[str, bool]:
+    specs = done.get("specs", [])
+    by_method = {spec.get("method"): spec for spec in specs}
+    sparsity = done.get("sparsity_config", {})
+    stream = done.get("stream", {})
+    return {
+        "complete": bool(done.get("complete")),
+        "jump_relu_mode": done.get("sparsity_mode") == "jump_relu",
+        "shared_sparsity_weight": math.isclose(
+            float(sparsity.get("target_l0_loss_weight", math.nan)),
+            weight,
+        ),
+        "shared_threshold_lr": math.isclose(
+            float(sparsity.get("threshold_lr_multiplier", math.nan)),
+            float(expected["shared_threshold_lr_multiplier"]),
+        )
+        and "threshold_lr_multipliers_by_method" not in sparsity,
+        "token_budget": int(done.get("tokens_seen", -1))
+        >= int(expected["token_budget"]),
+        "source_range": stream.get("range_name") == expected["source_range_name"],
+        "data_seed": int(stream.get("data_seed", -1)) == int(expected["data_seed"]),
+        "probe_seed": int(stream.get("probe_seed_base", -1))
+        == int(expected["probe_seed_base"]),
+        "model_pair": len(specs) == 2 and set(by_method) == {"mse", "dpsae"},
+        "model_seed": bool(specs)
+        and all(int(spec.get("seed", -1)) == int(expected["model_seed"]) for spec in specs),
+        "decoder_weight": "dpsae" in by_method
+        and math.isclose(
+            float(by_method["dpsae"].get("decoder_weight", math.nan)),
+            float(expected["decoder_weight"]),
+        ),
+    }
+
+
 def evaluate_sparsity_weight_grid(
     config: dict[str, Any],
     output: Path,
@@ -447,12 +605,14 @@ def evaluate_sparsity_weight_grid(
     cache = torch.load(cache_path, map_location="cpu", weights_only=False)
     low, high = map(float, settings["accepted_l0_interval"])
     rows = []
+    point_metadata: dict[float, dict[str, Any]] = {}
     inputs: dict[str, Any] = {"cache": input_record(cache_path)}
     for index, point in enumerate(grid["points"]):
         weight = float(point["weight"])
         models_path = ROOT / point["models"]
         log_path = ROOT / point["training_log"]
-        model_rows, _ = evaluate_models(
+        done_path = ROOT / point["done"]
+        model_rows, model_inputs = evaluate_models(
             models_path,
             cache,
             settings,
@@ -463,11 +623,29 @@ def evaluate_sparsity_weight_grid(
             log_path,
             records=int(grid["late_window_records"]),
         )
+        done = json.loads(done_path.read_text())
+        provenance = run_provenance_checks(
+            done,
+            weight=weight,
+            expected=grid,
+        )
+        provenance["paths_colocated"] = (
+            models_path.resolve().parent
+            == log_path.resolve().parent
+            == done_path.resolve().parent
+        )
+        point_metadata[weight] = {
+            "paired_l0_gap": model_inputs["paired_l0_gap"],
+            "provenance_checks": provenance,
+        }
         by_name = {row["model"]: row for row in model_rows}
         if set(by_name) != set(trajectories):
             raise RuntimeError("training log and exported models do not match")
         for name in sorted(by_name):
             row = {"weight": weight, **by_name[name], **trajectories[name]}
+            row["dead_fraction_maximum"] = (
+                row["dead_maximum"] / row["dictionary_size"]
+            )
             row["l0_interval_in_band"] = bool(
                 low <= row["l0_ci95"][0] and row["l0_ci95"][1] <= high
             )
@@ -480,6 +658,7 @@ def evaluate_sparsity_weight_grid(
             rows.append(row)
         inputs[f"models_weight_{weight:g}"] = input_record(models_path)
         inputs[f"training_log_weight_{weight:g}"] = input_record(log_path)
+        inputs[f"done_weight_{weight:g}"] = input_record(done_path)
         if device.type == "cuda":
             torch.cuda.empty_cache()
 
@@ -490,16 +669,25 @@ def evaluate_sparsity_weight_grid(
         by_method = {row["method"]: row for row in pair}
         if set(by_method) != {"mse", "dpsae"}:
             raise RuntimeError("every sparsity weight must contain one model per method")
-        gap = abs(by_method["mse"]["l0"] - by_method["dpsae"]["l0"])
+        paired_gap = point_metadata[weight]["paired_l0_gap"]
+        gap = float(paired_gap["absolute_estimate"])
         checks = {
             "both_l0_intervals_in_band": all(
                 row["l0_interval_in_band"] for row in pair
             ),
-            "inter_method_l0_gap": gap
+            "inter_method_l0_gap_upper95": float(paired_gap["absolute_upper95"])
             <= float(settings["maximum_inter_method_l0_gap"]),
             "late_drift": all(row["late_drift_pass"] for row in pair),
             "finite_health": all(
                 row["finite_state"] and row["finite_health"] for row in pair
+            ),
+            "dead_fraction": all(
+                row["dead_fraction_maximum"]
+                <= float(grid["maximum_dead_fraction"])
+                for row in pair
+            ),
+            "run_provenance": all(
+                point_metadata[weight]["provenance_checks"].values()
             ),
         }
         weight_gates.append(
@@ -507,6 +695,8 @@ def evaluate_sparsity_weight_grid(
                 "weight": weight,
                 "checks": checks,
                 "inter_method_l0_gap": gap,
+                "paired_l0_gap": paired_gap,
+                "provenance_checks": point_metadata[weight]["provenance_checks"],
                 "advance": all(checks.values()),
             }
         )
@@ -564,6 +754,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--models", type=Path)
+    parser.add_argument("--training-log", type=Path)
+    parser.add_argument("--run-done", type=Path)
     parser.add_argument("--label", default="pair")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--gpu-memory-fraction", type=float, default=0.20)
@@ -592,6 +784,8 @@ def main() -> None:
             output,
             args.models,
             args.label,
+            training_log_path=args.training_log,
+            run_done_path=args.run_done,
             **common,
         )
         print(json.dumps({"advance": result["advance"], "checks": result["checks"]}, indent=2), flush=True)

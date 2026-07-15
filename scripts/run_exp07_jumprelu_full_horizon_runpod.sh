@@ -75,6 +75,8 @@ SCREEN="$OUTPUT/jumprelu_full_horizon_screen"
 
 "$PYTHON" -u experiments/exp07_jumprelu_calibration.py pair \
   --models "$SCREEN/models.pt" \
+  --training-log "$SCREEN/training.jsonl" \
+  --run-done "$SCREEN/done.json" \
   --label full_horizon_screen \
   --device cuda:0 \
   --gpu-memory-fraction 0.20 \
