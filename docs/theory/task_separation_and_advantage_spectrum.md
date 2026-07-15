@@ -49,17 +49,18 @@ Fix \(\lambda>0\), put \(n=d=2\) and \(\rho=2\lambda\), and choose
 
 \[
 X=\begin{pmatrix}a&0\\0&b\end{pmatrix},\qquad
-Z_1=\begin{pmatrix}a+\delta&0\\0&b\end{pmatrix},\qquad
-Z_2=\begin{pmatrix}a&0\\0&b+\delta\end{pmatrix}.
+\widehat X_1=\begin{pmatrix}a+\delta&0\\0&b\end{pmatrix},\qquad
+\widehat X_2=\begin{pmatrix}a&0\\0&b+\delta\end{pmatrix}.
 \]
 
-Both reconstructions can be realized by a nonnegative sparse autoencoder with
-zero decoder bias, unit-norm identity decoder \(D=I_2\), and codes
-\(C_i=Z_i\).  Each sample has exactly one active latent, so both models have
-average \(L_0=1\).  They also have identical reconstruction error,
+Both reconstructions can be realized by nonnegative codes
+\(Z_i=\widehat X_i\) and the same linear decoder \(W=I_2\). Each sample has
+exactly one active latent, so both codes have average \(L_0=1\). They also
+have identical reconstruction error,
 
 \[
-\lVert X-Z_1\rVert_F^2=\lVert X-Z_2\rVert_F^2=\delta^2,
+\lVert X-\widehat X_1\rVert_F^2
+=\lVert X-\widehat X_2\rVert_F^2=\delta^2,
 \]
 
 and hence identical MSE and NMSE under any common element count and source
@@ -81,12 +82,12 @@ K_\lambda(X)=\operatorname{diag}(\kappa_\rho(a),\kappa_\rho(b)),
 \]
 
 \[
-K_\lambda(Z_1)=\operatorname{diag}(\kappa_\rho(a+\delta),\kappa_\rho(b)),
+K_\lambda(\widehat X_1)=\operatorname{diag}(\kappa_\rho(a+\delta),\kappa_\rho(b)),
 \quad
-K_\lambda(Z_2)=\operatorname{diag}(\kappa_\rho(a),\kappa_\rho(b+\delta)).
+K_\lambda(\widehat X_2)=\operatorname{diag}(\kappa_\rho(a),\kappa_\rho(b+\delta)).
 \]
 
-Let \(A_i=K_\lambda(X)-K_\lambda(Z_i)\) and
+Let \(A_i=K_\lambda(X)-K_\lambda(\widehat X_i)\) and
 \(\eta_\rho(t)=\kappa_\rho(t+\delta)-\kappa_\rho(t)\).  Since
 \(\kappa_\rho\) is strictly increasing on \((0,\infty)\),
 \(\eta_\rho(a),\eta_\rho(b)>0\), and
@@ -112,8 +113,9 @@ whereas
 \lVert A_2e_2\rVert_2^2=\eta_\rho(b)^2>0.
 \]
 
-Thus \(Z_2\) is strictly better for \(e_1\) and \(Z_1\) is strictly better
-for \(e_2\), despite exact MSE and sparsity matching. \(\square\)
+Thus \(\widehat X_2\) is strictly better for \(e_1\) and \(\widehat X_1\)
+is strictly better for \(e_2\), despite exact MSE and code-sparsity matching.
+\(\square\)
 
 The construction is stated after the repository's fixed preprocessing.  This
 is admissible because that preprocessing imposes no zero-mean or unit-RMS
@@ -133,7 +135,7 @@ An aggregate decoder score does not identify which tasks carry that error.
 
 ### Corollary 2 (positive aggregate advantage need not imply taskwise dominance)
 
-Label \(Z_1\) as the baseline reconstruction and \(Z_2\) as the candidate.
+Label \(\widehat X_1\) as the baseline reconstruction and \(\widehat X_2\) as the candidate.
 Their task-advantage operator is
 
 \[
@@ -158,14 +160,14 @@ so the trace is positive and the operator is indefinite.
 
 ## 3. Exact taskwise advantage identities
 
-### Theorem 2 (advantage spectrum for one geometry group)
+### Proposition 2 (advantage spectrum for one geometry group)
 
-Fix a source group \(X\) and two reconstructions \(Z_M,Z_D\), evaluated with
+Fix a source group \(X\) and two reconstructions \(\widehat X_M,\widehat X_D\), evaluated with
 the conventions in Section 1.  Define
 
 \[
-A_M=K_\lambda(X)-K_\lambda(Z_M),\qquad
-A_D=K_\lambda(X)-K_\lambda(Z_D),
+A_M=K_\lambda(X)-K_\lambda(\widehat X_M),\qquad
+A_D=K_\lambda(X)-K_\lambda(\widehat X_D),
 \]
 
 and
@@ -223,7 +225,7 @@ and for any zero-mean isotropic random vector with second moment \(I_n\),
 
 For a uniform unit vector, \(\mathbb E[uu^\top]=I_n/n\). \(\square\)
 
-### Theorem 3 (exact reconciliation with the ratio-of-sums headline)
+### Proposition 3 (exact reconciliation with the ratio-of-sums headline)
 
 Let groups be indexed by \(g=1,\ldots,G\).  Group sizes and calibrated ridges
 may vary with \(g\), provided both methods use the same samples and ridge
@@ -264,7 +266,7 @@ is
 
 #### Proof
 
-Theorem 2 gives
+Proposition 2 gives
 
 \[
 \operatorname{tr}Q_g=N_{M,g}-N_{D,g}.
@@ -349,7 +351,7 @@ ratio-of-sums headline does not average these per-task ratios.
 
 | Claim ID | Theorem-ready claim | Assumptions | Empirical prediction or check | Falsifier / scope boundary | Status |
 |---|---|---|---|---|---|
-| TH-SEP-01 | Equal reconstruction MSE and equal code \(L_0\) do not order fixed-ridge task errors; this remains true for nonnegative one-active-coordinate codes and a unit identity decoder. | Fixed global preprocessing, \(\lambda>0\), no group centering, refitted ridge tasks. | Matched NMSE/L0 need not make the empirical advantage operator PSD. | This is an existence theorem, so PSD empirical spectra limit its mechanistic relevance but do not falsify it. | Proved above. |
+| TH-SEP-01 | Equal reconstruction MSE and equal code \(L_0\) do not order fixed-ridge task errors; this remains true for nonnegative one-active-coordinate codes and a common linear decoder. | Fixed global preprocessing, \(\lambda>0\), no group centering, refitted ridge tasks. | Matched NMSE/L0 need not make the empirical advantage operator PSD. | This is an existence theorem, so PSD empirical spectra limit its mechanistic relevance but do not falsify it. | Proved above. |
 | TH-SPEC-01 | The eigenvalues of \(Q=A_M^\top A_M-A_D^\top A_D\) are the extremal absolute task-error advantages, and \(Q\succeq0\) exactly characterizes weak dominance over all tasks. | Same source rows, ridge, preprocessing, and target norm. | Positive and negative eigenvalues certify taskwise exchange; PSD certifies uniform weak dominance within the audited group. | No semantic, held-out, frozen-network, or per-task-relative conclusion follows from an eigenvalue alone. | Proved above. |
 | TH-SPEC-02 | Summed spectral trace exactly reconciles with the exact ratio-of-sums distortion difference and paired reduction. | Identity targets; common source denominator; baseline numerator positive for paired reduction. | Trace and stored numerator differences must agree numerically for every seed and audit slice. | Does not apply to the sampled self-normalized training gradient or to a mean of groupwise ratios. | Proved above. |
 | TH-CTRL-01 | A JumpReLU decoder-effect comparison is identified only after a decoder-blind controller setting passes the frozen sparsity and health gates at full horizon. | Shared grid and training budget; no decoder, NMSE, or language-model outcome access during selection. | Both models must satisfy the common \(L_0\) band, pairwise mismatch, drift, finite-state, provenance, and dead-feature gates. | Failure is evidence about controller feasibility, not the sign of a DPSAE effect. | Evaluated; no setting passed. |
