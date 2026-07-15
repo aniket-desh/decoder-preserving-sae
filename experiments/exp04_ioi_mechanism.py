@@ -493,7 +493,13 @@ def analyze(
 def plot_results(config: dict, experiment_paths: dict[str, Path]) -> None:
     import matplotlib.pyplot as plt
 
-    from dpsae.plot_style import COLORS, apply_paper_style, clean_axis, savefig
+    from dpsae.plot_style import (
+        COLORS,
+        SEQUENTIAL_CMAP,
+        apply_paper_style,
+        clean_axis,
+        savefig,
+    )
 
     analysis = json.loads((experiment_paths["output"] / "analysis.json").read_text())
     validation = json.loads(
@@ -603,7 +609,7 @@ def plot_results(config: dict, experiment_paths: dict[str, Path]) -> None:
             values / scale,
             aspect="auto",
             interpolation="nearest",
-            cmap="magma",
+            cmap=SEQUENTIAL_CMAP,
             vmin=0,
             vmax=1,
         )

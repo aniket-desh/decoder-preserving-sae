@@ -1,0 +1,66 @@
+# Aniket's Nord scientific plotting defaults.
+# Hex colors omit the leading hash because it starts a comment in mplstyle files.
+
+figure.dpi: 120
+figure.facecolor: white
+figure.autolayout: False
+
+savefig.dpi: 300
+savefig.facecolor: white
+savefig.edgecolor: white
+savefig.bbox: standard
+savefig.pad_inches: 0.02
+
+font.family: sans-serif
+font.sans-serif: DejaVu Sans
+font.size: 7.25
+mathtext.fontset: dejavusans
+
+axes.facecolor: white
+axes.edgecolor: 4C566A
+axes.labelcolor: 2E3440
+axes.titlecolor: 2E3440
+axes.titlesize: 8.0
+axes.titleweight: semibold
+axes.labelsize: 7.25
+axes.linewidth: 0.75
+axes.axisbelow: True
+axes.grid: True
+axes.spines.top: False
+axes.spines.right: False
+axes.prop_cycle: cycler('color', ['5E81AC', 'D08770', 'B48EAD', 'A3BE8C', 'BF616A', '8FBCBB', 'EBCB8B'])
+
+xtick.color: 4C566A
+ytick.color: 4C566A
+xtick.labelsize: 6.75
+ytick.labelsize: 6.75
+xtick.direction: out
+ytick.direction: out
+xtick.major.size: 3.0
+ytick.major.size: 3.0
+xtick.major.width: 0.7
+ytick.major.width: 0.7
+xtick.minor.size: 1.8
+ytick.minor.size: 1.8
+xtick.minor.width: 0.45
+ytick.minor.width: 0.45
+
+grid.color: D8DEE9
+grid.linewidth: 0.55
+grid.alpha: 0.9
+
+lines.linewidth: 1.45
+lines.markersize: 4.2
+lines.markeredgewidth: 0.7
+patch.linewidth: 0.6
+
+legend.frameon: False
+legend.fontsize: 6.75
+legend.handlelength: 1.6
+legend.handletextpad: 0.5
+legend.columnspacing: 0.9
+legend.borderaxespad: 0.3
+
+pdf.fonttype: 42
+ps.fonttype: 42
+svg.fonttype: none

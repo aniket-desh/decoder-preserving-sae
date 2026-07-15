@@ -27,3 +27,15 @@ The reference implementation targets Python 3.11+ and PyTorch. With `uv` install
 uv sync --extra dev
 uv run pytest
 ```
+
+## Figures
+
+The project uses the Nord scientific style in `src/dpsae/plot_style.py`. It fixes semantic method identities, colorblind-redundant markers and line styles, venue-aware physical sizing, and paired PDF/PNG export. See `docs/plotting_style.md` for the visual contract.
+
+Install the portable Matplotlib layer once for use in any repository:
+
+```bash
+PYTHONPATH=src python3 scripts/install_plot_style.py
+```
+
+After installation, lightweight plots can use `plt.style.use("aniket-nord")`; paper figures should use the semantic helpers so colors retain the same scientific meaning across projects.

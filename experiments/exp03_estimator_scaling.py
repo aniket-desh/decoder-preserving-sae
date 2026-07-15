@@ -29,7 +29,14 @@ from dpsae.decoder_distance import (
     batched_sampled_decoder_loss,
     batched_sampled_decoder_statistics,
 )
-from dpsae.plot_style import COLORS, apply_paper_style, clean_axis, savefig
+from dpsae.plot_style import (
+    COLORS,
+    NEUTRAL,
+    SEQUENTIAL_CMAP,
+    apply_paper_style,
+    clean_axis,
+    savefig,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -730,7 +737,7 @@ def plot_estimator_accuracy(
     fig, axes = plt.subplots(1, 2, figsize=(6.8, 2.8))
     ax = axes[0]
     ranks = sorted({int(row["target_effective_rank"]) for row in synthetic})
-    colors = plt.cm.viridis(np.linspace(0.12, 0.88, len(ranks)))
+    colors = SEQUENTIAL_CMAP(np.linspace(0.28, 0.95, len(ranks)))
     for rank, color in zip(ranks, colors):
         rows = sorted(
             selected(synthetic, target_effective_rank=rank),
@@ -763,7 +770,7 @@ def plot_estimator_accuracy(
     ax = axes[1]
     primary_fraction = 0.25
     group_sizes = sorted({int(row["group_size"]) for row in activation})
-    colors = plt.cm.Blues(np.linspace(0.45, 0.9, len(group_sizes)))
+    colors = SEQUENTIAL_CMAP(np.linspace(0.35, 0.95, len(group_sizes)))
     for group_size, color in zip(group_sizes, colors):
         rows = sorted(
             selected(
@@ -781,7 +788,7 @@ def plot_estimator_accuracy(
         q90 = np.array([float(row["q90_absolute_relative_error"]) for row in rows])
         ax.plot(x, median, color=color, marker="o", label=f"Group {group_size}")
         ax.fill_between(x, q10, q90, color=color, alpha=0.12, linewidth=0)
-    ax.axvspan(4, 16, color="#EDEDED", alpha=0.5, zorder=0)
+    ax.axvspan(4, 16, color=NEUTRAL["fill"], alpha=0.8, zorder=0)
     ax.set_title("Frozen GPT-2 activation estimates")
     ax.set_xlabel("Random probes $m$")
     ax.set_ylabel("Absolute relative error")
@@ -796,7 +803,7 @@ def plot_estimator_accuracy(
 def plot_ridge_calibration(rows: list[dict[str, str]], figures_dir: Path) -> None:
     fig, axes = plt.subplots(1, 3, figsize=(9.9, 2.8))
     group_sizes = sorted({int(row["group_size"]) for row in rows})
-    colors = plt.cm.Blues(np.linspace(0.45, 0.9, len(group_sizes)))
+    colors = SEQUENTIAL_CMAP(np.linspace(0.35, 0.95, len(group_sizes)))
     for group_size, color in zip(group_sizes, colors):
         group_rows = sorted(
             selected(rows, group_size=group_size),
