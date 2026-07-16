@@ -26,7 +26,7 @@ fi
   > "$LOGS/manifest_validation_synthetic.log" 2>&1
 
 export PYTHONDONTWRITEBYTECODE=1
-export PYTHONPATH=src
+export PYTHONPATH=.:src
 export MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/dpsae-mpl}"
 
 cleanup_children() {

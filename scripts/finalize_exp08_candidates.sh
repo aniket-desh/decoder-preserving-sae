@@ -34,7 +34,7 @@ test -x "$PYTHON"
 test -s "$MANIFEST"
 
 export PYTHONDONTWRITEBYTECODE=1
-export PYTHONPATH=src
+export PYTHONPATH=.:src
 export MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/dpsae-mpl}"
 
 "$PYTHON" -u scripts/prepare_exp08_run.py \

@@ -1,0 +1,77 @@
+{
+  "experiment": "exp09_frozen_network",
+  "model": {
+    "name": "openai-community/gpt2",
+    "revision": "607a30d783dfa663caf39e06633721c8d4cfcd7e",
+    "layer": 8,
+    "dtype": "bfloat16"
+  },
+  "checkpoints": {
+    "selected_decoder_weight": 0.03125,
+    "expected_seeds": [0, 1, 2],
+    "expected_k": 32,
+    "input_dimension": 768,
+    "dictionary_size": 16384,
+    "bytes": 605191237,
+    "sha256": "227e60c2162e0a948dbd53b0c3afbb063435ec288fec47e33e5583193cc7c781"
+  },
+  "checkpoint_provenance": {
+    "training_revision": "79607d446eb1cc71b5853b8d0e46dcbccac174d0",
+    "training_interval": [50000000, 120000000],
+    "training_done": {
+      "bytes": 6090,
+      "sha256": "9c521a195ddd0c8be1ead8ca759052212008fef36707b20ad27c3a70c139d83e"
+    },
+    "confirmation_summary": {
+      "bytes": 6435,
+      "sha256": "4fe2699c12e71586374d3739f86bcf24175fe9bb334462665afffcdd7b3f05b4"
+    }
+  },
+  "calibration": {
+    "bytes": 2364549,
+    "sha256": "2b0c886b986acf0a32857f1ca9a28c3046529813e67082c0b333f6c89bb86d7b"
+  },
+  "natural_text": {
+    "dataset_name": "HuggingFaceFW/fineweb",
+    "dataset_config": "sample-10BT",
+    "dataset_split": "train",
+    "dataset_revision": "9bb295ddab0e05d785b879661af7260fed5140fc",
+    "absolute_range": [200000000, 210000000],
+    "sequence_length": 256,
+    "sequences": 2048,
+    "sampling_seed": 2027071601,
+    "sampling_algorithm": "random_permutation_of_nonoverlapping_aligned_blocks_v1",
+    "batch_sequences": 8,
+    "bootstrap_samples": 10000,
+    "bootstrap_seed": 2027071602,
+    "confidence_interval": [0.025, 0.975],
+    "noninferiority_margin": 1.01,
+    "identity_max_abs_logit_difference": 0.00001,
+    "identity_max_mean_abs_logit_difference": 0.0000001
+  },
+  "ioi": {
+    "examples": 2048,
+    "name_split": "test",
+    "template_split": "test",
+    "name_split_seed": 2027071603,
+    "generator_seed": 2027071604,
+    "batch_size": 64,
+    "bootstrap_samples": 10000,
+    "bootstrap_seed": 2027071605,
+    "confidence_interval": [0.025, 0.975],
+    "identity_max_abs_logit_difference": 0.00001,
+    "identity_max_mean_abs_logit_difference": 0.0000001
+  },
+  "smoke": {
+    "natural_sequences": 8,
+    "ioi_examples": 16,
+    "bootstrap_samples": 100
+  },
+  "runpod": {
+    "gpu_model": "NVIDIA A40 48GB",
+    "gpu_count": 4,
+    "gpu_hourly_usd": 0.45,
+    "allocation_hourly_usd": 1.80,
+    "network_volume_gib": 200
+  }
+}

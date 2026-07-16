@@ -114,14 +114,12 @@ def repository_state(root: Path = ROOT) -> dict[str, Any]:
         revision = subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=root, text=True
         ).strip()
-        dirty = bool(
-            subprocess.check_output(
-                ["git", "status", "--porcelain"], cwd=root, text=True
-            ).strip()
-        )
+        status = subprocess.check_output(
+            ["git", "status", "--porcelain"], cwd=root, text=True
+        ).splitlines()
     except (OSError, subprocess.CalledProcessError):
-        revision, dirty = "unknown", None
-    return {"revision": revision, "dirty": dirty}
+        revision, status = "unknown", ["repository state unavailable"]
+    return {"revision": revision, "dirty": bool(status), "status": status}
 
 
 def _validate_config(config: Mapping[str, Any]) -> None:

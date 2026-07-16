@@ -11,6 +11,27 @@ from experiments import exp04b_confirmatory as runner
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_repository_state_uses_shared_provenance_schema():
+    state = runner.repository_state(ROOT)
+
+    assert set(state) == {"revision", "dirty", "status"}
+    assert state["dirty"] == bool(state["status"])
+    assert isinstance(state["status"], list)
+
+
+def test_repository_state_fails_closed_when_git_is_unavailable(monkeypatch):
+    def fail(*_args, **_kwargs):
+        raise OSError("git unavailable")
+
+    monkeypatch.setattr(runner.subprocess, "check_output", fail)
+
+    state = runner.repository_state(ROOT)
+
+    assert state["revision"] == "unknown"
+    assert state["dirty"] is True
+    assert state["status"] == ["repository state unavailable"]
+
+
 def test_driver_imports_config_and_uses_stable_cache_names():
     config = runner.load_config(ROOT / "configs" / "exp04b_confirmatory.json")
     paths = runner.experiment_paths(config)

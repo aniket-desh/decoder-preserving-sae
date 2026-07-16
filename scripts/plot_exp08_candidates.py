@@ -183,51 +183,59 @@ def validate_code_hash(run_manifest: Mapping[str, Any], relative: str) -> None:
         raise ValueError(f"candidate renderer code changed after run-manifest creation: {path}")
 
 
-def panel_heading(
-    ax: plt.Axes,
-    label: str,
-    title: str,
-    subtitle: str,
-    *,
-    y: float = 1.075,
-    label_x: float = -0.17,
-    title_x: float = 0.0,
-) -> None:
-    """Place every panel label, title, and subtitle on fixed baselines."""
+def renderer_provenance(run_manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Record a post-hoc renderer revision without weakening data validation."""
 
-    ax.text(
-        label_x,
-        y,
-        label,
-        transform=ax.transAxes,
-        color=NEUTRAL["text"],
-        fontweight="bold",
-        ha="left",
-        va="bottom",
-        clip_on=False,
-    )
-    ax.text(
-        title_x,
-        y,
-        title,
-        transform=ax.transAxes,
-        color=NEUTRAL["text"],
-        fontweight="bold",
-        ha="left",
-        va="bottom",
-        clip_on=False,
-    )
-    ax.text(
-        title_x,
-        y - 0.075,
-        subtitle,
-        transform=ax.transAxes,
-        color=NEUTRAL["muted"],
-        fontsize=6.5,
-        ha="left",
-        va="bottom",
-        clip_on=False,
-    )
+    relative = "scripts/plot_exp08_candidates.py"
+    try:
+        experiment_run_sha256 = run_manifest["code"][relative]["sha256"]
+    except KeyError as error:
+        raise ValueError(f"run manifest is missing code input {relative!r}") from error
+    current_sha256 = sha256_file(ROOT / relative)
+    return {
+        "path": relative,
+        "experiment_run_sha256": experiment_run_sha256,
+        "current_renderer_sha256": current_sha256,
+        "posthoc_layout_revision": current_sha256 != experiment_run_sha256,
+    }
+
+
+def spaced_label_positions(
+    values: Sequence[float],
+    lower: float,
+    upper: float,
+    *,
+    minimum_fraction: float = 0.085,
+    padding_fraction: float = 0.035,
+) -> np.ndarray:
+    """Spread ordered labels deterministically while preserving their order."""
+
+    array = np.asarray(values, dtype=float)
+    if array.ndim != 1 or array.size == 0 or not np.isfinite(array).all():
+        raise ValueError("label positions must be a finite nonempty vector")
+    if not math.isfinite(lower) or not math.isfinite(upper) or lower >= upper:
+        raise ValueError("label-position bounds must be finite and increasing")
+    span = upper - lower
+    left = lower + padding_fraction * span
+    right = upper - padding_fraction * span
+    minimum = minimum_fraction * span
+    if minimum * (array.size - 1) > right - left:
+        return np.linspace(left, right, array.size)
+
+    order = np.argsort(array, kind="stable")
+    placed = np.clip(array[order], left, right)
+    for index in range(1, placed.size):
+        placed[index] = max(placed[index], placed[index - 1] + minimum)
+    if placed[-1] > right:
+        placed[-1] = right
+        for index in range(placed.size - 2, -1, -1):
+            placed[index] = min(placed[index], placed[index + 1] - minimum)
+    if placed[0] < left:
+        placed = np.linspace(left, right, placed.size)
+
+    result = np.empty_like(placed)
+    result[order] = placed
+    return result
 
 
 def quantiles(values: Sequence[float]) -> tuple[float, float, float]:
@@ -347,8 +355,8 @@ def validate_inputs(
     repository = run_manifest.get("repository")
     if not isinstance(repository, dict) or repository.get("dirty") is not False:
         raise ValueError("Exp08 run manifest must bind a clean repository")
-    for relative in ("scripts/plot_exp08_candidates.py", "src/dpsae/plot_style.py"):
-        validate_code_hash(run_manifest, relative)
+    plotter_provenance = renderer_provenance(run_manifest)
+    validate_code_hash(run_manifest, "src/dpsae/plot_style.py")
 
     external_hashes = {
         "static_baseline_evaluation": paths["static_baseline"],
@@ -450,6 +458,7 @@ def validate_inputs(
         "task_spectrum": spectrum,
         "static_baseline": static,
         "structured_metadata": structured_meta,
+        "renderer_provenance": plotter_provenance,
     }
     return payloads, paths
 
@@ -596,14 +605,21 @@ def plot_structured(
         ax.axhline(0, color=NEUTRAL["reference"], linestyle=":", linewidth=0.9)
         ax.axvline(1, color=NEUTRAL["reference"], linestyle=":", linewidth=0.9)
         ax.text(
-            0.48,
-            0.78,
-            "2D scale reference\nnot a sparse threshold",
+            0.50,
+            0.065,
+            "2D scale reference\n(no sparse threshold)",
             transform=ax.transAxes,
             fontsize=5.8,
             color=NEUTRAL["muted"],
-            ha="left",
-            va="top",
+            ha="center",
+            va="bottom",
+            bbox={
+                "facecolor": NEUTRAL["white"],
+                "edgecolor": "none",
+                "alpha": 0.90,
+                "pad": 0.8,
+            },
+            zorder=5,
         )
         ax.set_xscale("log", base=2)
         labeled_weights = (0.25, 0.5, 1.0, 2.0, 4.0)
@@ -611,7 +627,6 @@ def plot_structured(
         ax.set_xlabel(r"$\beta/\beta_{\star,\mathrm{2D}}$ (scale only)")
         ax.set_ylabel("Protected distortion reduction (%)")
         clean_axis(ax)
-        panel_heading(ax, "A", "Task-prior dose response", "10 seeds; median, q10–q90")
 
         forest(
             axes[1],
@@ -626,12 +641,6 @@ def plot_structured(
             metric_labels=("NMSE", "Protected", "Unrelated", "Isotropic"),
         )
         axes[1].set_xlabel("Reduction vs paired MSE (%)")
-        panel_heading(
-            axes[1],
-            "B",
-            "Task-family distortion",
-            "Seeds; median, q10–q90",
-        )
 
         forest(
             axes[2],
@@ -641,12 +650,6 @@ def plot_structured(
             metric_labels=("Matched |cos|", "Support F1"),
         )
         axes[2].set_xlabel("Gain over paired MSE (pp)")
-        panel_heading(
-            axes[2],
-            "C",
-            "Protected recovery",
-            "Seeds; median, q10–q90",
-        )
 
         fig.legend(
             handles=[method_handle(method) for method in STRUCTURED_METHODS],
@@ -655,7 +658,7 @@ def plot_structured(
             frameon=False,
             bbox_to_anchor=(0.5, 0.01),
         )
-        fig.subplots_adjust(left=0.09, right=0.99, top=0.80, bottom=0.27, wspace=0.55)
+        fig.subplots_adjust(left=0.09, right=0.99, top=0.93, bottom=0.27, wspace=0.55)
         pdf, png = save_figure(fig, output_dir / "task_prior_candidates")
         plt.close(fig)
     summary = {
@@ -837,10 +840,14 @@ def plot_language_model(
             context="gamma minimum decoder reduction",
         )
         xlim = (min(float(x.min()) - x_margin, gate_x - x_margin), float(x.max()) + x_margin)
-        ylim = (
-            min(-y_margin, float((y - lower).min()) - y_margin),
-            max(float((y + upper).max()) + y_margin, gate_y + y_margin),
+        data_bottom = min(-y_margin, float((y - lower).min()) - y_margin)
+        data_top = max(float((y + upper).max()), gate_y)
+        data_span = max(data_top - data_bottom, 1.0)
+        label_rails = (
+            data_top + 0.14 * data_span,
+            data_top + 0.055 * data_span,
         )
+        ylim = (data_bottom, data_top + 0.24 * data_span)
         ax.add_patch(
             Rectangle(
                 (xlim[0], gate_y),
@@ -865,19 +872,46 @@ def plot_language_model(
             linewidth=0.8,
             zorder=3,
         )
-        for index, row in enumerate(gamma):
-            near_top = row["decoder_reduction"] > ylim[1] - 0.12 * (
-                ylim[1] - ylim[0]
+        x_order = np.argsort(x, kind="stable")
+        label_x = np.empty_like(x)
+        label_y = np.empty_like(y)
+        for rail in range(2):
+            indices = x_order[rail::2]
+            label_x[indices] = spaced_label_positions(
+                x[indices],
+                xlim[0],
+                xlim[1],
+                minimum_fraction=0.19,
+                padding_fraction=0.10,
             )
-            vertical_offset = -6 if near_top else (7 if index % 2 == 0 else -12)
+            label_y[indices] = label_rails[rail]
+        ax.text(
+            xlim[0] + 0.01 * (xlim[1] - xlim[0]),
+            label_rails[0],
+            r"$\gamma$:",
+            fontsize=5.2,
+            color=NEUTRAL["text"],
+            ha="left",
+            va="bottom",
+        )
+        for row, x_text, y_text in zip(gamma, label_x, label_y, strict=True):
             ax.annotate(
                 f"{row['weight']:g}",
                 (row["nmse_change"], row["decoder_reduction"]),
-                xytext=(4, vertical_offset),
-                textcoords="offset points",
-                fontsize=5.5,
+                xytext=(x_text, y_text),
+                textcoords="data",
+                fontsize=5.2,
                 color=NEUTRAL["muted"],
-                va="top" if near_top else "baseline",
+                ha="center",
+                va="bottom",
+                arrowprops={
+                    "arrowstyle": "-",
+                    "color": NEUTRAL["reference"],
+                    "linewidth": 0.45,
+                    "alpha": 0.60,
+                    "shrinkA": 1.5,
+                    "shrinkB": 2.0,
+                },
             )
         point = selected[0]
         ax.scatter(
@@ -889,6 +923,16 @@ def plot_language_model(
             edgecolors=SEMANTIC["primary"],
             linewidths=1.2,
             zorder=4,
+        )
+        ax.annotate(
+            "selected",
+            (point["nmse_change"], point["decoder_reduction"]),
+            xytext=(4, -10),
+            textcoords="offset points",
+            fontsize=5.4,
+            color=SEMANTIC["primary"],
+            ha="left",
+            va="top",
         )
         mse_style = METHOD_STYLES["mse"]
         ax.scatter(
@@ -916,7 +960,6 @@ def plot_language_model(
         ax.set_xlabel("NMSE change vs MSE (%)")
         ax.set_ylabel("Exact decoder reduction (%)")
         clean_axis(ax)
-        panel_heading(ax, "A", "Clean decoder-weight sweep", "Labels show γ; ring marks selected γ")
 
         ax = axes_flat[1]
         for index, row in enumerate(confirmation):
@@ -954,12 +997,15 @@ def plot_language_model(
         ax.set_xlabel("Reconstruction NMSE (%)")
         ax.set_ylabel("Exact decoder distortion (%)")
         clean_axis(ax)
-        panel_heading(ax, "B", "Clean matched-quality confirmation", "Each arrow connects a paired seed")
         ax.legend(
             handles=[method_handle("mse"), method_handle("dpsae")],
-            loc="best",
+            loc="lower center",
+            bbox_to_anchor=(0.5, 1.01),
+            ncol=2,
             frameon=False,
-            fontsize=6,
+            fontsize=5.8,
+            handletextpad=0.4,
+            columnspacing=1.0,
         )
 
         ax = axes_flat[2]
@@ -992,7 +1038,6 @@ def plot_language_model(
         ax.set_xlabel("NMSE change vs paired MSE (%)")
         ax.set_ylabel("Decoder reduction vs paired MSE (%)")
         clean_axis(ax)
-        panel_heading(ax, "C", "Static-loss controls", "Separate clean three-seed baseline fleet")
         ax.legend(
             handles=[method_handle(method) for method in ("dpsae", "whitening", "spectral")],
             loc="best",
@@ -1027,7 +1072,6 @@ def plot_language_model(
         ax.set_ylim(0, 100)
         ax.set_ylabel("Random target directions (%)")
         clean_axis(ax)
-        panel_heading(ax, "D", "Taskwise advantage shares", "5% materiality threshold; refitted readouts")
         ax.legend(
             loc="upper center",
             bbox_to_anchor=(0.5, -0.13),
@@ -1036,7 +1080,14 @@ def plot_language_model(
             fontsize=5.4,
         )
 
-        fig.subplots_adjust(left=0.10, right=0.98, top=0.87, bottom=0.15, wspace=0.43, hspace=0.75)
+        fig.subplots_adjust(
+            left=0.10,
+            right=0.98,
+            top=0.89,
+            bottom=0.15,
+            wspace=0.43,
+            hspace=0.55,
+        )
         pdf, png = save_figure(fig, output_dir / "language_model_candidates")
         plt.close(fig)
     summary = {
@@ -1081,39 +1132,36 @@ def plot_frozen_fidelity(
             "loss_recovered_difference_dpsae_minus_mse_ci95",
             1.0,
             100.0,
-            "Loss recovered",
-            "DPSAE minus MSE (pp)",
+            "Loss recovered\nDPSAE minus MSE\n(pp)",
         ),
         (
             "kl_difference_dpsae_minus_mse",
             "kl_difference_dpsae_minus_mse_ci95",
             -1.0,
             1000.0,
-            "Output KL",
-            r"MSE minus DPSAE ($10^{-3}$ nats/token)",
+            "Output KL\nMSE minus DPSAE\n" + r"($10^{-3}$ nats/token)",
         ),
         (
             "cross_entropy_increase_difference_dpsae_minus_mse",
             "cross_entropy_increase_difference_dpsae_minus_mse_ci95",
             -1.0,
             1000.0,
-            "Excess cross-entropy",
-            r"MSE minus DPSAE ($10^{-3}$ nats/token)",
+            "Excess cross-entropy\nMSE minus DPSAE\n"
+            + r"($10^{-3}$ nats/token)",
         ),
         (
             "top1_agreement_difference_dpsae_minus_mse",
             "top1_agreement_difference_dpsae_minus_mse_ci95",
             1.0,
             100.0,
-            "Top-1 agreement",
-            "DPSAE minus MSE (pp)",
+            "Top-1 agreement\nDPSAE minus MSE\n(pp)",
         ),
     )
     transformed: dict[str, list[dict[str, float]]] = {}
     with paper_context():
         fig, axes = plt.subplots(2, 2, figsize=figure_size("full", aspect=0.74))
-        for label, ax, spec in zip("ABCD", axes.ravel(), specs, strict=True):
-            key, ci_key, sign, scale, title, subtitle = spec
+        for ax, spec in zip(axes.ravel(), specs, strict=True):
+            key, ci_key, sign, scale, ylabel = spec
             panel_rows = []
             for row in rows:
                 center, low, high = transformed_interval(
@@ -1148,16 +1196,8 @@ def plot_frozen_fidelity(
             )
             ax.axhline(0, color=NEUTRAL["reference"], linestyle=":", linewidth=0.9)
             ax.set_xticks(x, [f"s{int(row['seed'])}" for row in panel_rows])
-            ax.set_ylabel(subtitle)
+            ax.set_ylabel(ylabel)
             clean_axis(ax)
-            panel_heading(
-                ax,
-                label,
-                title,
-                "Positive values favor DPSAE",
-                label_x=0.0,
-                title_x=0.14,
-            )
 
         nmse_ratios = [
             number(
@@ -1185,7 +1225,14 @@ def plot_frozen_fidelity(
             fontsize=6,
             color=NEUTRAL["muted"],
         )
-        fig.subplots_adjust(left=0.13, right=0.98, top=0.87, bottom=0.16, wspace=0.39, hspace=0.72)
+        fig.subplots_adjust(
+            left=0.17,
+            right=0.98,
+            top=0.95,
+            bottom=0.16,
+            wspace=0.46,
+            hspace=0.55,
+        )
         pdf, png = save_figure(fig, output_dir / "frozen_fidelity_review")
         plt.close(fig)
     summary = {
@@ -1262,11 +1309,10 @@ def plot_robustness(
 ) -> tuple[Path, Path, dict[str, Any]]:
     data = robustness_data(payload)
     axes_order = ("ridge", "group_size", "grouping")
-    titles = ("Ridge strength", "Geometry group size", "Token grouping")
     summaries: dict[str, Any] = {}
     with paper_context():
         fig, axes = plt.subplots(1, 3, figsize=figure_size("full", aspect=0.52))
-        for panel, ax, axis, title in zip("ABC", axes, axes_order, titles, strict=True):
+        for ax, axis in zip(axes, axes_order, strict=True):
             labels = data["setting_order"].get(axis)
             if not labels:
                 raise ValueError(f"robustness artifact has no {axis} settings")
@@ -1316,9 +1362,8 @@ def plot_robustness(
             ax.tick_params(axis="y", length=0)
             ax.set_xlabel("Decoder reduction (%)")
             clean_axis(ax)
-            panel_heading(ax, panel, title, "Seeds; median, q10–q90")
             summaries[axis] = axis_summary
-        fig.subplots_adjust(left=0.12, right=0.99, top=0.80, bottom=0.20, wspace=0.58)
+        fig.subplots_adjust(left=0.12, right=0.99, top=0.95, bottom=0.20, wspace=0.58)
         pdf, png = save_figure(fig, output_dir / "robustness_appendix")
         plt.close(fig)
     return pdf, png, summaries
@@ -1383,6 +1428,7 @@ def main() -> None:
             "robustness": "raw paired seeds with median and 10th--90th percentiles",
         },
         "inputs": {name: file_record(path) for name, path in paths.items()},
+        "renderer_provenance": payloads["renderer_provenance"],
         "renderer_inputs": {
             "plotter": file_record(Path(__file__)),
             "plot_style": file_record(ROOT / "src/dpsae/plot_style.py"),

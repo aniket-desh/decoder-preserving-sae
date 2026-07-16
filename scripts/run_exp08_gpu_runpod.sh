@@ -28,7 +28,7 @@ test -s "$MANIFEST"
 export HF_HOME="${HF_HOME:-/workspace/huggingface}"
 export TOKENIZERS_PARALLELISM=true
 export PYTHONDONTWRITEBYTECODE=1
-export PYTHONPATH=src
+export PYTHONPATH=.:src
 
 GPU_USED_MIB="$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -n 1 | tr -d ' ')"
 if (( GPU_USED_MIB > 1024 )); then

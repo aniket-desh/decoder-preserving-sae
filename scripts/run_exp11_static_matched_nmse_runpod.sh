@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+STAGE="${1:-all}"
+case "$STAGE" in
+  all|screen) DEFAULT_SESSION="dpsae-spectral-screen" ;;
+  confirm) DEFAULT_SESSION="dpsae-spectral-confirm" ;;
+  *) DEFAULT_SESSION="dpsae-spectral-${STAGE}" ;;
+esac
+SESSION="${EXP11_SESSION:-$DEFAULT_SESSION}"
+REFERENCE_ROOT="${EXP11_REFERENCE_ARTIFACT_ROOT:-/workspace/dpsae-restored/paper_closure/confirmation_common}"
+LOG_DIR="$ROOT/artifacts/exp11_static_matched_nmse/logs"
+PYTHON_BIN="${EXP11_PYTHON:-$ROOT/.venv/bin/python}"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  PYTHON_BIN="python3"
+fi
+
+if [[ "$STAGE" == "--worker" ]]; then
+  STAGE="${2:-all}"
+  mkdir -p "$LOG_DIR"
+  cd "$ROOT"
+  export PYTHONPATH=src
+  export HF_HOME="${HF_HOME:-/workspace/huggingface}"
+  export TOKENIZERS_PARALLELISM=true
+  export CUDA_VISIBLE_DEVICES="${EXP11_CUDA_VISIBLE_DEVICES:-3}"
+  "$PYTHON_BIN" -u experiments/exp11_static_matched_nmse.py \
+    "$STAGE" \
+    --reference-artifact-root "$REFERENCE_ROOT" \
+    2>&1 | tee -a "$LOG_DIR/${STAGE}.log"
+fi
+
+if ! command -v tmux >/dev/null 2>&1; then
+  echo "tmux is required" >&2
+  exit 1
+fi
+if tmux has-session -t "$SESSION" 2>/dev/null; then
+  echo "tmux session already exists: $SESSION" >&2
+  exit 1
+fi
+
+mkdir -p "$LOG_DIR"
+tmux new-session -d -s "$SESSION" \
+  "EXP11_REFERENCE_ARTIFACT_ROOT='$REFERENCE_ROOT' '$0' --worker '$STAGE'"
+echo "started tmux session $SESSION"
+echo "log: $LOG_DIR/${STAGE}.log"

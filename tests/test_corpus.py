@@ -12,10 +12,16 @@ def test_prepare_token_memmap_writes_nonoverlapping_stream_slice(
     tmp_path: Path, monkeypatch
 ):
     rows = [{"text": "a"}, {"text": "b"}, {"text": "c"}]
+    observed = {}
+
+    def load_dataset(*_args, **kwargs):
+        observed.update(kwargs)
+        return iter(rows)
+
     monkeypatch.setitem(
         sys.modules,
         "datasets",
-        SimpleNamespace(load_dataset=lambda *_args, **_kwargs: iter(rows)),
+        SimpleNamespace(load_dataset=load_dataset),
     )
 
     class Tokenizer:
@@ -37,13 +43,58 @@ def test_prepare_token_memmap_writes_nonoverlapping_stream_slice(
         dataset_name="fake",
         dataset_config=None,
         split="train",
+        dataset_revision="frozen-revision",
         document_batch=2,
     )
 
     values = np.memmap(path, mode="r", dtype=np.uint16, shape=(5,))
     assert values.tolist() == [4, 5, 99, 6, 7]
     assert metadata["token_offset"] == 4
+    assert metadata["dataset_revision"] == "frozen-revision"
+    assert observed["revision"] == "frozen-revision"
     assert not path.with_suffix(".bin.partial").exists()
+
+
+def test_prepare_token_memmap_does_not_reuse_another_dataset_revision(
+    tmp_path: Path, monkeypatch
+):
+    revisions = []
+
+    def load_dataset(*_args, **kwargs):
+        revisions.append(kwargs["revision"])
+        token = 1 if kwargs["revision"] == "first" else 2
+        return iter([{"text": str(token)}])
+
+    monkeypatch.setitem(
+        sys.modules,
+        "datasets",
+        SimpleNamespace(load_dataset=load_dataset),
+    )
+
+    class Tokenizer:
+        vocab_size = 100
+        eos_token_id = 99
+        name_or_path = "fake"
+
+        def __call__(self, texts, *, add_special_tokens):
+            assert not add_special_tokens
+            return {"input_ids": [[int(text)] for text in texts]}
+
+    path = tmp_path / "tokens.bin"
+    kwargs = {
+        "tokenizer": Tokenizer(),
+        "token_count": 2,
+        "dataset_name": "fake",
+        "dataset_config": None,
+        "split": "train",
+    }
+    prepare_token_memmap(path, dataset_revision="first", **kwargs)
+    metadata = prepare_token_memmap(path, dataset_revision="second", **kwargs)
+
+    values = np.memmap(path, mode="r", dtype=np.uint16, shape=(2,))
+    assert revisions == ["first", "second"]
+    assert values.tolist() == [2, 99]
+    assert metadata["dataset_revision"] == "second"
 
 
 def test_memmap_token_batcher_is_reproducible(tmp_path: Path):

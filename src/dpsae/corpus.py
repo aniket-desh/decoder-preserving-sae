@@ -20,6 +20,7 @@ def prepare_token_memmap(
     dataset_name: str,
     dataset_config: str | None,
     split: str,
+    dataset_revision: str | None = None,
     text_column: str = "text",
     document_batch: int = 256,
 ) -> dict:
@@ -43,10 +44,21 @@ def prepare_token_memmap(
         if (
             metadata.get("token_count") == token_count
             and metadata.get("token_offset", 0) == token_offset
+            and metadata.get("dataset_name") == dataset_name
+            and metadata.get("dataset_config") == dataset_config
+            and metadata.get("dataset_revision") == dataset_revision
+            and metadata.get("split") == split
+            and metadata.get("tokenizer") == tokenizer.name_or_path
         ):
             return metadata
 
-    dataset = load_dataset(dataset_name, dataset_config, split=split, streaming=True)
+    dataset = load_dataset(
+        dataset_name,
+        dataset_config,
+        split=split,
+        streaming=True,
+        revision=dataset_revision,
+    )
     partial_path = output_path.with_suffix(output_path.suffix + ".partial")
     partial_path.unlink(missing_ok=True)
     tokens = np.memmap(partial_path, mode="w+", dtype=np.uint16, shape=(token_count,))
@@ -92,6 +104,7 @@ def prepare_token_memmap(
     metadata = {
         "dataset_name": dataset_name,
         "dataset_config": dataset_config,
+        "dataset_revision": dataset_revision,
         "split": split,
         "token_count": token_count,
         "token_offset": token_offset,

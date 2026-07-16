@@ -1,5 +1,7 @@
 # Aniket Nord scientific figures
 
+> **Current publication contract:** use `docs/notes/portable_figure_style_protocol.md`. It supersedes the older clauses below wherever they conflict, especially the rules for no in-figure titles or panel letters and the finalized red-MSE/blue-primary identity.
+
 This is the default visual system for DPSAE and the portable starting point for future projects. It combines Nord's cool visual identity with the figure grammar that makes strong scientific papers feel coherent: a white canvas, one dominant method color, pale structural fills, direct annotations, restrained legends, and a small number of accents whose meanings do not change between figures.
 
 The canonical files are:

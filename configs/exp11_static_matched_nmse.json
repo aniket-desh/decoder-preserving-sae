@@ -1,0 +1,52 @@
+{
+  "experiment": "exp11_static_matched_nmse",
+  "protocol_version": "1.0.0",
+  "protocol_frozen_utc": "2026-07-16",
+  "require_clean_repository": true,
+  "execution_allocation": {
+    "provider": "RunPod",
+    "gpu_model": "NVIDIA A40 48GB",
+    "gpu_count": 4,
+    "assigned_physical_gpu": 3,
+    "pod_rate_usd_per_hour": 1.80,
+    "gpu_rate_usd_per_hour": 0.45,
+    "volume_gb": 200
+  },
+  "source_config": "configs/exp04_ioi_mechanism.json",
+  "source_artifact": "artifacts/exp04_ioi_mechanism",
+  "evaluation_config": "configs/exp04b_confirmatory.json",
+  "evaluation_artifact": "artifacts/exp04b_confirmatory",
+  "reference_confirmation": {
+    "artifact_root": "artifacts/exp04_ioi_mechanism/confirmation",
+    "models_file": "models.pt",
+    "expected_models_sha256": "227e60c2162e0a948dbd53b0c3afbb063435ec288fec47e33e5583193cc7c781",
+    "role": "archived_gamma_0p03125_checkpoint_bundle_provenance_only"
+  },
+  "expected_source": {
+    "model_name": "openai-community/gpt2",
+    "layer": 8,
+    "primary_k": 32,
+    "decoder_weight": 0.25
+  },
+  "screen": {
+    "seed": 0,
+    "training_tokens": 25000000,
+    "corpus_range": "screen",
+    "evaluation_split": "selection",
+    "beta_grid": [2.0, 4.0, 8.0, 16.0, 32.0],
+    "target_nmse_ratio": 1.07,
+    "matching_tolerance": 0.01,
+    "decoder_reduction_margin": 0.02,
+    "randomness_stage": "exp11_spectral_screen",
+    "randomness_replicate": 0
+  },
+  "confirmation": {
+    "seeds": [0, 1, 2],
+    "training_tokens": 100000000,
+    "corpus_range": "confirmation",
+    "evaluation_split": "test",
+    "randomness_stage": "exp11_spectral_confirmation",
+    "randomness_replicate": 2
+  },
+  "checkpoint_tokens": 5000000
+}

@@ -2,7 +2,9 @@ import csv
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 import pytest
 
 from scripts import plot_exp08_candidates as candidates
@@ -337,8 +339,69 @@ def test_transformed_interval_preserves_positive_axis_semantics() -> None:
     ) == pytest.approx((20, 10, 30))
 
 
+def test_spaced_label_positions_are_deterministic_and_collision_free() -> None:
+    values = np.asarray([0.13, 0.10, 0.11, 0.12, 0.81])
+    first = candidates.spaced_label_positions(
+        values,
+        0.0,
+        1.0,
+        minimum_fraction=0.11,
+    )
+    second = candidates.spaced_label_positions(
+        values,
+        0.0,
+        1.0,
+        minimum_fraction=0.11,
+    )
+
+    assert first == pytest.approx(second)
+    ordered = first[np.argsort(values, kind="stable")]
+    assert np.diff(ordered).min() >= 0.11 - 1e-12
+    assert ordered[0] >= 0.035
+    assert ordered[-1] <= 0.965
+
+
+def test_posthoc_renderer_revision_is_recorded_but_allowed(tmp_path: Path) -> None:
+    experiment, structured, static_path, _ = _build_inputs(tmp_path)
+    manifest_path = experiment / "run_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["code"]["scripts/plot_exp08_candidates.py"]["sha256"] = "0" * 64
+    _write_json(manifest_path, manifest)
+
+    payloads, _ = candidates.validate_inputs(experiment, structured, static_path)
+
+    provenance = payloads["renderer_provenance"]
+    assert provenance["experiment_run_sha256"] == "0" * 64
+    assert provenance["current_renderer_sha256"] == _hash(
+        candidates.ROOT / "scripts/plot_exp08_candidates.py"
+    )
+    assert provenance["posthoc_layout_revision"] is True
+
+
+def test_non_renderer_manifest_mismatch_still_fails_closed(tmp_path: Path) -> None:
+    experiment, structured, static_path, _ = _build_inputs(tmp_path)
+    manifest_path = experiment / "run_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["code"]["src/dpsae/plot_style.py"]["sha256"] = "0" * 64
+    _write_json(manifest_path, manifest)
+
+    with pytest.raises(ValueError, match="changed after run-manifest creation"):
+        candidates.validate_inputs(experiment, structured, static_path)
+
+
 def test_end_to_end_candidate_render_and_manifest(tmp_path: Path, monkeypatch) -> None:
     experiment, structured, static_path, output = _build_inputs(tmp_path)
+    original_save_figure = candidates.save_figure
+
+    def checked_save_figure(fig: Any, path: Path) -> tuple[Path, Path]:
+        for ax in fig.axes:
+            assert all(
+                not ax.get_title(loc=location).strip()
+                for location in ("left", "center", "right")
+            )
+        return original_save_figure(fig, path)
+
+    monkeypatch.setattr(candidates, "save_figure", checked_save_figure)
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -372,6 +435,14 @@ def test_end_to_end_candidate_render_and_manifest(tmp_path: Path, monkeypatch) -
     assert manifest["complete"]
     assert not manifest["relative_weight_semantics"]["sparse_transition_claim"]
     assert manifest["status"] == "review_only_not_integrated_into_manuscript"
+    provenance = manifest["renderer_provenance"]
+    assert provenance["experiment_run_sha256"] == provenance[
+        "current_renderer_sha256"
+    ]
+    assert provenance["posthoc_layout_revision"] is False
+    assert provenance["current_renderer_sha256"] == manifest["renderer_inputs"][
+        "plotter"
+    ]["sha256"]
 
 
 def test_renderer_rejects_output_outside_experiment_root(tmp_path: Path) -> None:
