@@ -109,6 +109,8 @@ def load_config(path: Path = DEFAULT_CONFIG) -> dict[str, Any]:
         raise ValueError("the sparse-selection benchmark must remain L1")
     if benchmark["companion_regularization"] != "l2":
         raise ValueError("companion probes must match sae-probes' unfiltered L2 logreg baseline")
+    if benchmark.get("companion_full_code_matrix_format") != "scipy_csr_exact_values":
+        raise ValueError("companion full-code probes must use the frozen exact-value CSR format")
     if "unfiltered logreg baseline" not in benchmark["companion_regularization_rationale"]:
         raise ValueError("companion regularization rationale is missing")
     model = config["model"]
@@ -1020,6 +1022,32 @@ def _representations(
     return torch.cat(codes), torch.cat(reconstructions)
 
 
+def _full_code_csr(code: Tensor) -> Any:
+    """Preserve a BatchTopK code exactly while exposing its sparsity to sklearn.
+
+    ``find_best_reg`` accepts scipy CSR matrices without changing its CV grid,
+    solver, seed, or fitted outputs. BatchTopK codes are extremely wide but
+    contain only a few exact nonzeros per row, so passing the dense tensor makes
+    every lbfgs matrix product scan thousands of known-zero columns.
+    """
+
+    from scipy.sparse import csr_matrix
+
+    if code.ndim != 2 or code.layout != torch.strided:
+        raise ValueError("full-code CSR conversion requires a dense rank-two tensor")
+    if code.device.type != "cpu":
+        raise ValueError("full-code CSR conversion requires a CPU tensor")
+    if not torch.isfinite(code).all():
+        raise ValueError("full-code CSR conversion requires finite values")
+    dense = code.detach().contiguous().numpy()
+    sparse = csr_matrix(dense, copy=True)
+    sparse.sum_duplicates()
+    sparse.sort_indices()
+    if sparse.nnz != int(torch.count_nonzero(code)):
+        raise RuntimeError("full-code CSR conversion changed the exact nonzero support")
+    return sparse
+
+
 def run_companion_job(
     *,
     config: Mapping[str, Any],
@@ -1102,7 +1130,13 @@ def run_companion_job(
                 adapter, X_train, device=torch_device
             )
             test_code, test_reconstruction = _representations(adapter, X_test, device=torch_device)
-            full_code = find_best_reg(train_code, y_train, test_code, y_test, seed=probe_seed)
+            full_code = find_best_reg(
+                _full_code_csr(train_code),
+                y_train,
+                _full_code_csr(test_code),
+                y_test,
+                seed=probe_seed,
+            )
             reconstruction = find_best_reg(
                 train_reconstruction,
                 y_train,
@@ -1132,6 +1166,7 @@ def run_companion_job(
             "family": config["benchmark"]["family_by_dataset"][dataset],
             "num_train": num_train,
             "regularization": "sae_probes_find_best_reg_l2",
+            "full_code_matrix_format": "scipy_csr_exact_values",
             "heldout_split_id": heldout_identity["split_id"],
             "heldout_example_count": len(test_labels),
             "heldout_example_id_policy": heldout_identity["example_id_policy"],
@@ -1559,7 +1594,7 @@ def _assemble_timing_smoke_report(
     )
     passed = projection["projected_pod_hours"] <= float(smoke["maximum_projected_pod_hours"])
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "complete": True,
         "passed": passed,
         "config_digest": resolved["config_digest"],
@@ -1570,6 +1605,7 @@ def _assemble_timing_smoke_report(
         "selection_manifest_sha256": selection_digest,
         "names_and_concept_results_suppressed": True,
         "saved_concept_metric_count": 0,
+        "companion_full_code_matrix_format": "scipy_csr_exact_values",
         "thread_quota": dict(thread_quota),
         "cache_generation_timing": dict(cache_generation_timing),
         "tasks": list(rows),
@@ -1697,7 +1733,13 @@ def run_timing_smoke(
                 test_code,
                 _test_recon,
             ) in companion_representations.values():
-                find_best_reg(train_code, y_train, test_code, y_test, seed=probe_seed)
+                find_best_reg(
+                    _full_code_csr(train_code),
+                    y_train,
+                    _full_code_csr(test_code),
+                    y_test,
+                    seed=probe_seed,
+                )
 
         _, full_code_l2_seconds = _timed_call(torch_device, fit_full_codes)
 
@@ -1767,6 +1809,7 @@ def verify_timing_smoke_gate(config: Mapping[str, Any], output_root: Path) -> di
     report = read_json(path)
     smoke = config["runtime"]["timing_smoke"]
     required = {
+        "schema_version": 2,
         "complete": True,
         "passed": True,
         "config_digest": canonical_digest(config),
@@ -1774,6 +1817,7 @@ def verify_timing_smoke_gate(config: Mapping[str, Any], output_root: Path) -> di
         "task_count": int(smoke["task_count"]),
         "names_and_concept_results_suppressed": True,
         "saved_concept_metric_count": 0,
+        "companion_full_code_matrix_format": "scipy_csr_exact_values",
     }
     for key, expected in required.items():
         if report.get(key) != expected:

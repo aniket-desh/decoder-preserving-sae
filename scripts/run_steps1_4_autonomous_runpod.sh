@@ -6,6 +6,7 @@ set -Eeuo pipefail
 # uploads an artifact, or starts fresh confirmation.
 
 ROOT="${ROOT:-/workspace/decoder-preserving-sae-concept-v2}"
+EXPECTED_ROOT_REVISION="${EXPECTED_ROOT_REVISION:?set EXPECTED_ROOT_REVISION to the deployed clean commit}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/workspace/dpsae-runs/20260716/exp10_concept_discovery/pythia160m-block8-s0-pilot-v2}"
 MODEL_CACHE="${MODEL_CACHE:-/workspace/dpsae-runs/20260716/exp10_concept_discovery/shared-model-cache-v1}"
 EXP11_ROOT="${EXP11_ROOT:-/workspace/decoder-preserving-sae/artifacts/exp11_static_matched_nmse}"
@@ -115,7 +116,7 @@ if [[ -n "$(git -C "$ROOT" status --porcelain=v1 --untracked-files=all)" ]]; the
   echo "autonomous supervisor requires a clean Exp10 checkout: $ROOT" >&2
   exit 2
 fi
-if [[ "$(git -C "$ROOT" rev-parse HEAD)" != "da64fc2913cdce262b2718f4e5f47a7f97c8f33a" ]]; then
+if [[ "$(git -C "$ROOT" rev-parse HEAD)" != "$EXPECTED_ROOT_REVISION" ]]; then
   echo "unexpected Exp10 revision in $ROOT" >&2
   exit 2
 fi

@@ -38,6 +38,7 @@ def test_frozen_config_hashes_dataset_family_and_regularization_contracts():
     assert config["model"]["hook_name"] == "blocks.7.hook_resid_post"
     assert config["benchmark"]["regularization"] == "l1"
     assert config["benchmark"]["companion_regularization"] == "l2"
+    assert config["benchmark"]["companion_full_code_matrix_format"] == "scipy_csr_exact_values"
     assert config["benchmark"]["saebench_include_llm_baseline"] is False
     assert "unfiltered logreg baseline" in config["benchmark"]["companion_regularization_rationale"]
     assert set(config["benchmark"]["family_by_dataset"]) == set(config["benchmark"]["datasets"])
@@ -140,6 +141,7 @@ def test_timing_smoke_gate_accepts_only_the_frozen_blind_contract(tmp_path: Path
         )
     )
     report = {
+        "schema_version": 2,
         "complete": True,
         "passed": True,
         "config_digest": runner.canonical_digest(config),
@@ -147,6 +149,7 @@ def test_timing_smoke_gate_accepts_only_the_frozen_blind_contract(tmp_path: Path
         "task_count": smoke["task_count"],
         "names_and_concept_results_suppressed": True,
         "saved_concept_metric_count": 0,
+        "companion_full_code_matrix_format": "scipy_csr_exact_values",
         "cache_generation_timing": {
             "source": "in_process_monotonic",
             "generation_seconds": 100.0,
@@ -162,6 +165,63 @@ def test_timing_smoke_gate_accepts_only_the_frozen_blind_contract(tmp_path: Path
     report["names_and_concept_results_suppressed"] = False
     (tmp_path / "timing_smoke.json").write_text(json.dumps(report))
     with pytest.raises(RuntimeError, match="names_and_concept_results_suppressed"):
+        runner.verify_timing_smoke_gate(config, tmp_path)
+
+
+def test_full_code_csr_preserves_values_and_lbfgs_outputs():
+    from sklearn.linear_model import LogisticRegression
+
+    generator = torch.Generator().manual_seed(7)
+    dense = torch.zeros(180, 256)
+    indices = torch.randint(0, dense.shape[1], (180, 8), generator=generator)
+    dense.scatter_(1, indices, torch.randn(180, 8, generator=generator))
+    labels = ((dense[:, 3] - 0.7 * dense[:, 17]) > 0).numpy().astype(np.int64)
+    train_dense, test_dense = dense[:140], dense[140:]
+    train_csr = runner._full_code_csr(train_dense)
+    test_csr = runner._full_code_csr(test_dense)
+
+    np.testing.assert_array_equal(train_csr.toarray(), train_dense.numpy())
+    np.testing.assert_array_equal(test_csr.toarray(), test_dense.numpy())
+    assert train_csr.nnz == int(torch.count_nonzero(train_dense))
+    assert test_csr.nnz == int(torch.count_nonzero(test_dense))
+
+    dense_fit = LogisticRegression(C=1.0, random_state=11, max_iter=1000).fit(
+        train_dense.numpy(), labels[:140]
+    )
+    csr_fit = LogisticRegression(C=1.0, random_state=11, max_iter=1000).fit(
+        train_csr, labels[:140]
+    )
+    np.testing.assert_allclose(csr_fit.coef_, dense_fit.coef_, rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(
+        csr_fit.decision_function(test_csr),
+        dense_fit.decision_function(test_dense.numpy()),
+        rtol=1e-10,
+        atol=1e-10,
+    )
+    np.testing.assert_array_equal(
+        csr_fit.predict(test_csr), dense_fit.predict(test_dense.numpy())
+    )
+
+
+def test_timing_gate_rejects_obsolete_dense_schema(tmp_path: Path):
+    config = runner.load_config()
+    smoke = config["runtime"]["timing_smoke"]
+    (tmp_path / "timing_smoke.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "complete": True,
+                "passed": True,
+                "config_digest": runner.canonical_digest(config),
+                "probe_seed": smoke["probe_seed"],
+                "task_count": smoke["task_count"],
+                "names_and_concept_results_suppressed": True,
+                "saved_concept_metric_count": 0,
+            }
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="schema_version"):
         runner.verify_timing_smoke_gate(config, tmp_path)
 
 

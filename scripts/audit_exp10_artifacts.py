@@ -299,10 +299,15 @@ class ArtifactAuditor:
             timing_path = self.output_root / "timing_smoke.json"
             report = _read_json(timing_path)
             _require(
-                report.get("schema_version") == 1
+                report.get("schema_version") == 2
                 and report.get("complete") is True
                 and report.get("passed") is True,
                 "timing-smoke gate did not pass",
+            )
+            _require(
+                report.get("companion_full_code_matrix_format")
+                == "scipy_csr_exact_values",
+                "timing-smoke full-code matrix format drift",
             )
             _require(
                 report.get("config_digest") == self.config_digest,
@@ -708,6 +713,7 @@ class ArtifactAuditor:
                     "dataset": dataset,
                     "family": self.config["benchmark"]["family_by_dataset"][dataset],
                     "regularization": "sae_probes_find_best_reg_l2",
+                    "full_code_matrix_format": "scipy_csr_exact_values",
                 }
                 for key, wanted in identity.items():
                     _require(

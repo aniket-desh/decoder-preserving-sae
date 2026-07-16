@@ -73,6 +73,7 @@ def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
             "datasets": datasets,
             "dataset_manifest_sha256": AUDIT.canonical_digest(datasets),
             "family_by_dataset": {"task_a": "family_a"},
+            "companion_full_code_matrix_format": "scipy_csr_exact_values",
             "probe_seeds": seeds,
             "ks": [1, 2],
         },
@@ -133,13 +134,14 @@ def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
     _json(
         output / "timing_smoke.json",
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "complete": True,
             "passed": True,
             "config_digest": digest,
             "probe_seed": 99,
             "task_count": 1,
             "saved_concept_metric_count": 0,
+            "companion_full_code_matrix_format": "scipy_csr_exact_values",
         },
     )
     split = AUDIT._expected_split(config, "task_a", 11, 4)
@@ -279,6 +281,7 @@ def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
             "family": "family_a",
             "num_train": 4,
             "regularization": "sae_probes_find_best_reg_l2",
+            "full_code_matrix_format": "scipy_csr_exact_values",
             "heldout_split_id": split["split_id"],
             "heldout_example_count": 4,
             "heldout_example_id_policy": split["example_id_policy"],

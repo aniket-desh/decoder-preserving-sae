@@ -67,6 +67,7 @@
     "setting": "normal",
     "regularization": "l1",
     "companion_regularization": "l2",
+    "companion_full_code_matrix_format": "scipy_csr_exact_values",
     "companion_regularization_rationale": "Sparse selection uses sae-probes L1 exactly; original, reconstruction, and full-code representations use the benchmark's unfiltered logreg baseline, whose find_best_reg default is L2. All companion representations share the same L2 CV grid and probe seed.",
     "ks": [
       1,
