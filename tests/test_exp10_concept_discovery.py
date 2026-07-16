@@ -45,6 +45,14 @@ def test_frozen_config_hashes_dataset_family_and_regularization_contracts():
     assert config["runpod"]["pod_hour_usd"] == 1.8
 
 
+def test_source_hashes_accepts_repository_relative_config_path():
+    hashes = runner.source_hashes(Path("configs/exp10_concept_discovery.json"))
+
+    assert "configs/exp10_concept_discovery.json" in hashes
+    assert "experiments/exp10_concept_discovery.py" in hashes
+    assert "src/dpsae/saebench_adapter.py" in hashes
+
+
 def test_one_based_block_8_maps_to_transformerlens_block_7():
     assert one_based_resid_post_hook(8) == (7, "blocks.7.hook_resid_post")
     with pytest.raises(ValueError, match="positive"):

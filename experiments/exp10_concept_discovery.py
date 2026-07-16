@@ -432,11 +432,12 @@ def verify_saebench_environment(
 
 def source_hashes(config_path: Path) -> dict[str, str]:
     paths = [
-        config_path,
+        config_path if config_path.is_absolute() else ROOT / config_path,
         Path(__file__).resolve(),
         ROOT / "src/dpsae/saebench_adapter.py",
     ]
-    return {str(path.relative_to(ROOT)): file_sha256(path) for path in paths}
+    resolved = [path.resolve() for path in paths]
+    return {str(path.relative_to(ROOT)): file_sha256(path) for path in resolved}
 
 
 def freeze_run(
