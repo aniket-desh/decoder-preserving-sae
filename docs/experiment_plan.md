@@ -72,11 +72,11 @@ The standardized sparse-probe evaluation is pinned to SAEBench commit `8042bb382
 - L1 feature selection;
 - $k\in\{1,2,5\}$;
 - non-binarized latent activations;
-- the full residual-stream logistic-regression baseline;
+- the full residual-stream logistic-regression baseline, evaluated once per seed and task by the companion evaluator rather than duplicated inside the SAEBench wrapper;
 - ten preregistered probe seeds, with seed-specific output directories;
 - a frozen missing-result rule and dataset-family map recorded in the config before the pilot starts.
 
-The SAEBench wrapper reports the original residual-stream baseline and $k$-sparse SAE probes, but it does not supply the full-reconstruction and full-code comparisons required here. A companion evaluator must use exactly the same examples, splits, targets, preprocessing, and probe implementation to evaluate:
+The pinned SAEBench wrapper supplies the primary $k$-sparse SAE probes, but its optional original-residual baseline is disabled because the companion evaluator retains the identical unfiltered L2 logistic-regression baseline once per seed and task. The companion evaluator must use exactly the same examples, splits, targets, preprocessing, and probe implementation to evaluate:
 
 - original residual activations;
 - the full MSE and DPSAE reconstructions;
@@ -84,6 +84,12 @@ The SAEBench wrapper reports the original residual-stream baseline and $k$-spars
 - the $k=1,2,5$ selected-feature representations.
 
 The shared model-activation cache must be generated once, hashed, and opened read-only by all evaluation processes. MSE and DPSAE must never receive different examples, splits, or cached base activations.
+
+The runtime contract is also frozen before outcomes are opened. A static call-graph audit counted 21,470 `find_best_reg` calls in the unoptimized plan; disabling the duplicated SAEBench residual baseline removes 2,260 calls and leaves 19,210 without changing any task, seed, $k$, representation, or regularization choice. The remaining duplication is intentional: the SAEBench result remains the primary standardized artifact, while an exact refit records held-out predictions and weights for provenance. Four workers receive immutable sparse shards of five method-seed jobs each and companion shards of 3/3/2/2 seeds, run every sparse job before their companion jobs, and load the two adapters only once per process. Each process receives `floor(visible CPU count / 4)` BLAS/OpenMP threads.
+
+Before the paid concept fleet starts, one A40 must generate the shared cache and run a blind timing smoke with nonreport seed `2027071799`. The smoke selects eight tasks using dataset size and frozen manifest order only, with two tasks from each size quartile; its saved report may contain only opaque slots, train/test sizes, stage times, peak RSS/GPU memory, and the projection, never dataset names or concept-facing outputs. The projected four-worker wall time is the measured cache time plus the per-task p95 scaled to all 1,130 dataset-seed units with 30% headroom. Workers are gated on a passed report at or below three pod-hours.
+
+If the immutable 113-task cache was generated before the final runtime config and its manifest lacks an in-process generation timer, do not regenerate it or time a warm validation pass as though it were cold generation. `record-cold-cache-timing` must deterministically build an external provenance JSON from the original `cache_ready.json`, model-cache path, exact start/end Unix seconds, and an independently supplied expected duration. The command computes the source-manifest SHA-256 and canonical digest of all recorded cache-file hashes, rejects any elapsed-time mismatch, and lets `timing-preflight` adopt that exact manifest into a fresh output root. The smoke report records the external provenance path, SHA-256, 1,506-second duration, source-cache hash, model-cache path, and file-hash digest, and its projection uses the 1,506 seconds rather than the warm adoption time.
 
 ### 4.3 Checkpoint eligibility
 
@@ -370,16 +376,20 @@ Do not duplicate a 100GB SAEBench activation cache per GPU. Generate it once, va
 - Prepare one environment lock and one run manifest template.
 - Assign non-overlapping output roots and `tmux` session names.
 
-**First parallel wave**
+**Concept timing preflight**
 
-| GPU | Three-GPU allocation | Four-GPU allocation |
+Run `scripts/run_exp10_timing_smoke_a40.sh` in a named `tmux` session before launching the four concept workers. It is the single cache writer, verifies the sealed config and source hashes, loads both adapters once, and writes the blind timing report. Stop and revise the operational plan without opening concept results if the p95 projection plus 30% headroom exceeds three pod-hours; do not change scientific tasks, seeds, $k$, or controls to make the timing gate pass.
+
+**Concept pilot wave after the timing gate**
+
+| GPU | Frozen sparse shard | Companion shard, run after sparse work |
 |---:|---|---|
-| 0 | Pythia activation cache and MSE concept pilot | Pythia activation cache, baseline probes, and MSE concept pilot |
-| 1 | DPSAE concept pilot after the shared cache is frozen | DPSAE concept pilot and companion full-code/reconstruction probes |
-| 2 | Frozen GPT-2 confirmation | Frozen GPT-2 confirmation |
-| 3 | -- | Matched-NMSE static spectral screen or held-out IOI task evaluation |
+| 0 | MSE seeds `2027071701`--`2027071705` | seeds `2027071701`--`2027071703` |
+| 1 | MSE seeds `2027071706`--`2027071710` | seeds `2027071704`--`2027071706` |
+| 2 | DPSAE seeds `2027071701`--`2027071705` | seeds `2027071707`--`2027071708` |
+| 3 | DPSAE seeds `2027071706`--`2027071710` | seeds `2027071709`--`2027071710` |
 
-Baseline activation-cache construction is a single-writer stage. Other concept jobs wait for its completion marker rather than racing to populate the same cache.
+All four workers open the completed activation cache read-only and reuse one cached MSE adapter plus one cached DPSAE adapter for the process lifetime. The 3/3/2/2 companion split distributes its ten seed-level sweeps across the fleet instead of leaving the entire companion tail on one worker. Frozen-network confirmation and the matched-NMSE spectral screen remain independent stages, but on a four-A40 allocation they run before or after this all-GPU concept wave rather than competing with it.
 
 **Fresh Pythia confirmation, only after pilot advancement**
 
@@ -400,7 +410,7 @@ Keep each MSE/DPSAE seed pair on the same GPU and in the same paired training pr
 - Terminate the GPU allocation.
 - Submit GPT-5.4 mini Batch jobs from local or CPU compute.
 
-Suggested session names are `dpsae-concept-pilot-mse`, `dpsae-concept-pilot-dpsae`, `dpsae-frozen-confirm`, `dpsae-spectral-screen`, `dpsae-concept-confirm-s0`, `dpsae-concept-confirm-s1`, and `dpsae-concept-confirm-s2`. Every long command must tee to a stable log path inside its stage output directory. Keep `dpsae-resource-watch` alive for the whole allocation using `scripts/watch_arxiv_closure_hardware.sh`; it records all four GPUs, host RAM, `/workspace` capacity, kernel OOM-event availability/count, load, and active tmux sessions every 30 seconds. Warnings begin at 44,000 MiB GPU memory, 88 C, 12 GiB available host RAM, or 25 GiB free storage, with storage marked critical at 10 GiB.
+Suggested session names are `dpsae-concept-timing`, `dpsae-concept-pilot`, `dpsae-frozen-confirm`, `dpsae-spectral-screen`, `dpsae-concept-confirm-s0`, `dpsae-concept-confirm-s1`, and `dpsae-concept-confirm-s2`. Every long command must tee to a stable log path inside its stage output directory. Keep `dpsae-resource-watch` alive for the whole allocation using `scripts/watch_arxiv_closure_hardware.sh`; it records all four GPUs, host RAM, `/workspace` capacity, kernel OOM-event availability/count, load, and active tmux sessions every 30 seconds. Warnings begin at 44,000 MiB GPU memory, 88 C, 12 GiB available host RAM, or 25 GiB free storage, with storage marked critical at 10 GiB.
 
 ### 8.3 Failure isolation
 
@@ -419,6 +429,8 @@ RunPod prices are time-sensitive; the deploy console is authoritative. The activ
 | 4x A40 | $1.80 | $21.60 | $43.20 |
 
 Earlier estimates assumed a 25M-token concept confirmation and put the concept pilot at 6--12 A40 GPU-hours, fresh confirmation at another 6--12 GPU-hours, and frozen-network confirmation at 2--4 GPU-hours. The maturity plan can extend Pythia training to 100M--500M tokens, so those confirmation numbers are now lower bounds. Reserve 30--60 A40 GPU-hours for a mature three-pair Pythia confirmation until a short timing benchmark gives a better estimate.
+
+The concept pilot now has a stricter empirical spend gate: the blind smoke must project at most three hours on the active four-A40 pod after 30% headroom, corresponding to at most $5.40 for the projected fleet workload at $1.80 per pod-hour, plus the one-GPU smoke and any cache-preparation time not already included in its measured cache term. This replaces the earlier 6--12 GPU-hour guess once the smoke artifact exists; it does not authorize an expanded benchmark.
 
 A practical arXiv planning envelope is 50--100 total A40 GPU-hours, or $22.50--$45 in GPU charges at the active price, plus storage and API use. Four A40s compress that to roughly 12.5--25 fully utilized wall-clock hours. Setup delays, idle synchronization, cache generation, and retries can increase the billed wall time, so a 24-hour four-A40 reservation costs $43.20 before storage.
 
@@ -475,6 +487,8 @@ When implementation choices change, update the method section and this plan in t
 
 The useful lesson from MP-SAE, Matryoshka, Temporal SAE, Priors in Time, SAEBench, and Goodfire's feature analyses is to visualize the exact phenomenology the method claims to change. For this paper that means paired concept effects, the information-to-concentration ladder, token-level evidence for any feature labels, concept-blind training maturity, and frozen-network noninferiority. It does not mean importing their UMAPs, hierarchy heatmaps, modality histograms, steering sweeps, or broad sparsity frontiers: those plots test geometry, hierarchy, causal intervention, or scaling claims outside this frozen protocol.
 
+Figure typography is frozen to the vendored **D-DIN** family under `src/dpsae/fonts/d-din/`. Regular, Italic, and Bold form the ordinary hierarchy across Matplotlib, TikZ, and PGFPlots; Condensed is allowed only for an irreducible short categorical or diagram label after wording and layout have been improved; Expanded is restricted to sparse display accents and never appears on axes, ticks, legends, or ordinary annotations. Final renders must resolve ordinary Latin text to the pinned repository files and embed the font in the vector PDF; a host-installed DIN substitute or silent fallback invalidates the release render.
+
 The panel plan below is outcome-invariant. A failed pilot or noninferiority test gets the same effect plot with its null or margin visible; the destination changes, not the plot definition. All paper figures must be generated from the retained records listed here rather than from aggregate console output.
 
 | Panel | Claim and visual encoding | Aggregation and uncertainty | Raw data or snapshots that must be retained now | Priority |
@@ -504,13 +518,15 @@ Plot-design sources reviewed July 16, 2026:
 
 1. **Freeze configs and manifests.** Finish every item marked “to freeze” below before paid runs.
 2. **Validate adapters.** Native and benchmark code/reconstruction/NMSE/$L_0$ must agree before concept scores are opened.
-3. **Run independent first-wave stages.** Concept pilot, frozen-network confirmation, and the matched-NMSE spectral screen may run in parallel.
-4. **Apply the concept pilot gate once.** Record pass or fail without extending the evaluation grid.
-5. **Train fresh Pythia pairs only after advancement.** Choose maturity without concept labels, then run all three pairs concurrently.
-6. **Run confirmatory concept evaluation once.** Apply the frozen seedwise, aggregate, and multiplicity rules.
-7. **Describe only replicated candidates.** Archive contexts, shut down GPUs, then call the Batch API.
-8. **Integrate all outcomes, including nulls.** Update docs, methods, results, limitations, compute, and artifact manifests together.
-9. **Decide main-track generality after arXiv closure.** Add one modern family only if it materially addresses the remaining single-model criticism.
+3. **Pass the blind concept timing gate.** Generate and hash the shared cache, time eight size-stratified opaque tasks with seed `2027071799`, and require the p95-plus-30% projection to remain at or below three pod-hours.
+4. **Run the independent first-wave stages.** Dedicate all four GPUs to the frozen concept shards for its wave; frozen-network confirmation and the matched-NMSE spectral screen may run in separate waves in either order.
+5. **Audit, aggregate, then audit again.** A pre-aggregation artifact audit must prove exact shard completion and hash consistency; the final audit validates the aggregate before any concept outcome is interpreted.
+6. **Apply the concept pilot gate once.** Record pass or fail without extending the evaluation grid.
+7. **Train fresh Pythia pairs only after advancement.** Choose maturity without concept labels, then run all three pairs concurrently.
+8. **Run confirmatory concept evaluation once.** Apply the frozen seedwise, aggregate, and multiplicity rules.
+9. **Describe only replicated candidates.** Archive contexts, shut down GPUs, then call the Batch API.
+10. **Integrate all outcomes, including nulls.** Update docs, methods, results, limitations, compute, and artifact manifests together.
+11. **Decide main-track generality after arXiv closure.** Add one modern family only if it materially addresses the remaining single-model criticism.
 
 ## 14. Freeze checklist
 
@@ -554,3 +570,7 @@ Now frozen in the experiment configs before opening outcomes:
 **July 16, 2026, plot and retention review.** MP-SAE, Matryoshka, Temporal SAE, Priors in Time, SAEBench/sparse-probing, and Goodfire feature-analysis papers were reviewed for plot forms before the paid closure run. The plan adopts paired $k$-probe curves, per-concept effect forests, full-code-versus-sparse-code excess-gain views, token-aligned validated feature cards, concept-blind maturity trajectories, and seedwise frozen-network noninferiority forests. Geometry embeddings, hierarchy/modality plots, steering sweeps, and broad SAE sparsity frontiers were rejected because the frozen experiments do not support those claims. Per-example probe outputs, per-token feature traces, per-sequence frozen sufficient statistics, and maturity snapshots are now required retention fields so the necessary panels remain constructible after compute is released.
 
 **July 16, 2026, execution freeze.** The active pod was provisioned as four A40 48GB GPUs with a 200GB network volume at $1.80 per hour. Exact GPT-2 and Pythia checkpoint bundles, calibration artifacts, prior split caches, and provenance manifests were restored from the private Hugging Face archives and verified by SHA-256 before use. The concept, frozen-network, and matched-NMSE static configs now freeze every outcome-facing pilot choice; fresh Pythia duration remains conditional and must be frozen from concept-blind maturity metrics only if the pilot advances.
+
+**July 16, 2026, concept runtime audit.** A static audit found 21,470 `find_best_reg` calls in the concept plan, of which 2,260 came from a residual-stream baseline duplicated between SAEBench and the companion evaluator. The wrapper copy was disabled while the exact companion baseline was retained, reducing the plan to 19,210 calls without changing any scientific endpoint. The four-GPU schedule was frozen to 5/5/5/5 sparse method-seed shards followed by 3/3/2/2 companion-seed shards, with adapters cached once per worker and BLAS/OpenMP threads capped at one quarter of the visible CPU affinity. A blind eight-task size-quartile smoke with nonreport seed `2027071799` must project the complete fleet at or below three pod-hours after 30% headroom before workers may start.
+
+**July 16, 2026, figure typography freeze.** D-DIN was frozen as the paper-wide figure typeface and vendored with its upstream licenses and pinned SHA-256 values. Regular, Italic, and Bold are the ordinary hierarchy; Condensed is reserved for irreducible short labels and Expanded for sparse display accents. The plotting layer registers the repository files directly, uses an ASCII minus for D-DIN-compatible negative ticks, and requires embedded D-DIN fonts in release PDFs.

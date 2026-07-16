@@ -43,7 +43,7 @@ with paper_context():
     save_figure(fig, "figures/result")
 ```
 
-The built-in widths are 5.50 inches for the current ICLR text block, 2.62 inches for a half-width panel, and 7.00 inches for a wide preprint figure. Pass a measured width directly for another venue. The style uses deterministic DejaVu Sans typography and matching DejaVu math, so local, RunPod, and CI renders use the same glyphs. Final exports are vector PDF plus exact-size 300-DPI PNG; the canonical exporter does not use a tight crop.
+The built-in widths are 5.50 inches for the current ICLR text block, 2.62 inches for a half-width panel, and 7.00 inches for a wide preprint figure. Pass a measured width directly for another venue. The style loads the repository's pinned D-DIN Regular, Italic, and Bold files directly, so local, RunPod, and CI renders use the same glyphs; DejaVu Sans is retained only as the unsupported-math fallback, and tick labels use the supported ASCII minus rather than D-DIN's absent Unicode-minus glyph. D-DIN Condensed is restricted to irreducible short labels, while D-DIN Expanded is restricted to sparse display accents and never appears on axes, ticks, legends, or ordinary annotations. Final exports are vector PDF plus exact-size 300-DPI PNG; the canonical exporter does not use a tight crop.
 
 For lightweight work in any repository, install the portable style once:
 
@@ -83,6 +83,7 @@ Then use `plt.style.use("aniket-nord")`. The semantic Python layer is still pref
 - [ ] The figure has one claim and the caption states its scope.
 - [ ] Physical dimensions match the destination text or column width.
 - [ ] Text remains readable at 100% PDF zoom and in the compiled paper.
+- [ ] Ordinary Latin text resolves to the vendored D-DIN files without host substitution.
 - [ ] The same methods use the same semantic identities as every other figure.
 - [ ] No comparison depends on hue alone.
 - [ ] Error bars or bands identify their sampling unit.

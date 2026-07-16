@@ -76,6 +76,7 @@
     "binarize": false,
     "mean_diff_normalization": "mean",
     "include_original_residual_baseline": true,
+    "saebench_include_llm_baseline": false,
     "baseline_method": "logreg",
     "probe_seeds": [
       2027071701,
@@ -492,6 +493,92 @@
     "hard_planned_cost_usd": 10,
     "human_validation_minimum": 100,
     "human_validation_maximum": 300
+  },
+  "runtime": {
+    "worker_count": 4,
+    "thread_quota_policy": "floor_visible_cpu_count_divided_by_worker_count",
+    "sparse_worker_shards": [
+      {
+        "method": "mse",
+        "probe_seeds": [
+          2027071701,
+          2027071702,
+          2027071703,
+          2027071704,
+          2027071705
+        ]
+      },
+      {
+        "method": "mse",
+        "probe_seeds": [
+          2027071706,
+          2027071707,
+          2027071708,
+          2027071709,
+          2027071710
+        ]
+      },
+      {
+        "method": "dpsae",
+        "probe_seeds": [
+          2027071701,
+          2027071702,
+          2027071703,
+          2027071704,
+          2027071705
+        ]
+      },
+      {
+        "method": "dpsae",
+        "probe_seeds": [
+          2027071706,
+          2027071707,
+          2027071708,
+          2027071709,
+          2027071710
+        ]
+      }
+    ],
+    "companion_seed_shards": [
+      [
+        2027071701,
+        2027071702,
+        2027071703
+      ],
+      [
+        2027071704,
+        2027071705,
+        2027071706
+      ],
+      [
+        2027071707,
+        2027071708
+      ],
+      [
+        2027071709,
+        2027071710
+      ]
+    ],
+    "cache_adapters_once_per_worker": true,
+    "cold_cache_timing_source_policy": "in_process_monotonic_or_hash_bound_external_provenance",
+    "timing_smoke": {
+      "probe_seed": 2027071799,
+      "task_count": 8,
+      "quartile_count": 4,
+      "tasks_per_quartile": 2,
+      "selection": "sort_by_dataset_size_then_frozen_manifest_order_split_into_four_contiguous_quartiles_choose_one_third_and_two_thirds_positions",
+      "names_and_concept_results_forbidden": true,
+      "headroom_multiplier": 1.3,
+      "maximum_projected_pod_hours": 3.0,
+      "projection_pair_units": 1130,
+      "require_passed_report_before_workers": true
+    },
+    "fit_accounting": {
+      "current_find_best_reg_calls": 21470,
+      "saebench_baseline_calls_removed": 2260,
+      "post_fix_find_best_reg_calls": 19210,
+      "mathematically_unique_find_best_reg_calls": 12430
+    }
   },
   "runpod": {
     "gpu_type": "A40",

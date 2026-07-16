@@ -17,6 +17,10 @@ from dpsae.saebench_adapter import (
 from experiments import exp10_concept_discovery as runner
 
 
+def _write_json(path: Path, value: object) -> None:
+    path.write_text(json.dumps(value, sort_keys=True))
+
+
 def native_payload(*, method: str, d_in: int = 3, d_sae: int = 5, k: int = 2):
     model = BatchTopKSAE(d_in, d_sae, k, seed=4)
     model.calibrate_threshold_(torch.randn(32, d_in, generator=torch.Generator().manual_seed(5)))
@@ -34,15 +38,24 @@ def test_frozen_config_hashes_dataset_family_and_regularization_contracts():
     assert config["model"]["hook_name"] == "blocks.7.hook_resid_post"
     assert config["benchmark"]["regularization"] == "l1"
     assert config["benchmark"]["companion_regularization"] == "l2"
-    assert "unfiltered logreg baseline" in config["benchmark"][
-        "companion_regularization_rationale"
-    ]
-    assert set(config["benchmark"]["family_by_dataset"]) == set(
-        config["benchmark"]["datasets"]
-    )
+    assert config["benchmark"]["saebench_include_llm_baseline"] is False
+    assert "unfiltered logreg baseline" in config["benchmark"]["companion_regularization_rationale"]
+    assert set(config["benchmark"]["family_by_dataset"]) == set(config["benchmark"]["datasets"])
     assert config["runpod"]["gpu_count"] == 4
     assert config["runpod"]["network_volume_gib"] == 200
     assert config["runpod"]["pod_hour_usd"] == 1.8
+    runtime = config["runtime"]
+    assert runtime["worker_count"] == 4
+    assert [len(shard) for shard in runtime["companion_seed_shards"]] == [3, 3, 2, 2]
+    assert runtime["cache_adapters_once_per_worker"] is True
+    assert (
+        runtime["cold_cache_timing_source_policy"]
+        == "in_process_monotonic_or_hash_bound_external_provenance"
+    )
+    assert runtime["timing_smoke"]["probe_seed"] == 2027071799
+    assert runtime["timing_smoke"]["task_count"] == 8
+    assert runtime["timing_smoke"]["headroom_multiplier"] == 1.3
+    assert runtime["timing_smoke"]["maximum_projected_pod_hours"] == 3.0
 
 
 def test_source_hashes_accepts_repository_relative_config_path():
@@ -82,6 +95,319 @@ def test_launcher_records_environment_and_deployed_sources():
     assert "git status --porcelain=v1 --untracked-files=all" in launcher
     assert "environment-pip-freeze.txt" in launcher
     assert "deployed-source-sha256.txt" in launcher
+    assert "--phase pre-aggregate --wait-seconds 172800 &&" in launcher
+    assert "aggregate && $AUDITOR --phase final" in launcher
+    assert "audit_exp10_artifacts.py" in launcher
+
+
+def test_timing_launcher_self_detaches_into_tmux():
+    launcher = (runner.ROOT / "scripts/run_exp10_timing_smoke_a40.sh").read_text()
+
+    assert 'MODE="${1:-}"' in launcher
+    assert 'tmux new-session -d -s "$SESSION"' in launcher
+    assert "run_exp10_timing_smoke_a40.sh' --worker" in launcher
+    assert "timing-preflight" in launcher
+    assert "--cold-cache-provenance" in launcher
+
+
+def test_timing_smoke_selection_is_size_only_deterministic_and_stratified():
+    config = runner.load_config()
+    sizes = {dataset: 200 + index for index, dataset in enumerate(config["benchmark"]["datasets"])}
+
+    first = runner.select_timing_smoke_tasks(config, sizes)
+    second = runner.select_timing_smoke_tasks(config, dict(reversed(list(sizes.items()))))
+
+    assert first == second
+    assert len(first) == len({item["dataset"] for item in first}) == 8
+    assert [sum(item["quartile"] == quartile for item in first) for quartile in range(4)] == [
+        2,
+        2,
+        2,
+        2,
+    ]
+    assert all(item["n_train"] == min(item["dataset_size"] - 100, 1024) for item in first)
+
+
+def test_timing_smoke_gate_accepts_only_the_frozen_blind_contract(tmp_path: Path):
+    config = runner.load_config()
+    smoke = config["runtime"]["timing_smoke"]
+    (tmp_path / "cache_ready.json").write_text(
+        json.dumps(
+            {
+                "generation_seconds": 100.0,
+                "generation_timing_source": "in_process_monotonic",
+            }
+        )
+    )
+    report = {
+        "complete": True,
+        "passed": True,
+        "config_digest": runner.canonical_digest(config),
+        "probe_seed": smoke["probe_seed"],
+        "task_count": smoke["task_count"],
+        "names_and_concept_results_suppressed": True,
+        "saved_concept_metric_count": 0,
+        "cache_generation_timing": {
+            "source": "in_process_monotonic",
+            "generation_seconds": 100.0,
+        },
+        "projection": {
+            "projected_pod_hours": 2.9,
+            "cache_generation_seconds": 100.0,
+        },
+    }
+    (tmp_path / "timing_smoke.json").write_text(json.dumps(report))
+
+    assert runner.verify_timing_smoke_gate(config, tmp_path) == report
+    report["names_and_concept_results_suppressed"] = False
+    (tmp_path / "timing_smoke.json").write_text(json.dumps(report))
+    with pytest.raises(RuntimeError, match="names_and_concept_results_suppressed"):
+        runner.verify_timing_smoke_gate(config, tmp_path)
+
+
+def test_timing_thread_quota_uses_four_way_cpu_affinity(monkeypatch):
+    config = runner.load_config()
+    monkeypatch.setattr(runner.os, "sched_getaffinity", lambda _pid: set(range(12)), raising=False)
+    for name in (
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
+        monkeypatch.setenv(name, "3")
+
+    observed = runner._timing_thread_quota(config)
+
+    assert observed["visible_cpu_count"] == 12
+    assert observed["threads_per_worker"] == 3
+
+
+def test_timing_projection_uses_the_slowest_exact_worker_shard():
+    config = runner.load_config()
+    rows = [
+        {
+            "total_seconds": 13.0,
+            "stage_seconds": {
+                "sparse_method_0": {"total": 1.0},
+                "sparse_method_1": {"total": 2.0},
+                "companion": {"total": 10.0},
+            },
+        }
+        for _ in range(8)
+    ]
+
+    projection = runner._project_timing_smoke(config, rows, cache_generation_seconds=100.0)
+
+    expected_slowest_seconds = 113 * (5 * 1.0 + 3 * 10.0) * 1.3
+    assert projection["worker_projections"][0][
+        "p95_workload_seconds_with_headroom"
+    ] == pytest.approx(expected_slowest_seconds)
+    assert projection["projected_workload_seconds_with_headroom"] == pytest.approx(
+        expected_slowest_seconds
+    )
+    assert projection["projected_pod_hours"] == pytest.approx(
+        (100.0 + expected_slowest_seconds) / 3600
+    )
+
+
+def test_external_cold_cache_timing_is_hash_bound_recorded_and_projected(
+    tmp_path: Path,
+):
+    config = runner.load_config()
+    model_cache = tmp_path / "model-cache"
+    model_cache.mkdir()
+    cache = {
+        "model_cache": str(model_cache.resolve()),
+        "files": {
+            "opaque_a": {"sha256": "a" * 64},
+            "opaque_b": {"sha256": "b" * 64},
+        },
+    }
+    _write_json(tmp_path / "cache_ready.json", cache)
+    provenance = {
+        "schema_version": 1,
+        "complete": True,
+        "start_unix_seconds": 1784234613,
+        "end_unix_seconds": 1784236119,
+        "generation_seconds": 1506,
+        "source_cache_ready_path": str((tmp_path / "cache_ready.json").resolve()),
+        "source_cache_ready_sha256": runner.file_sha256(tmp_path / "cache_ready.json"),
+        "model_cache_path": str(model_cache.resolve()),
+        "cache_file_hashes_sha256": runner._cache_file_hashes_digest(cache),
+    }
+    provenance_path = tmp_path / "cold-cache.json"
+    _write_json(provenance_path, provenance)
+
+    timing = runner._resolve_cache_generation_timing(
+        cache,
+        output_root=tmp_path,
+        model_cache=model_cache,
+        provenance_path=provenance_path,
+    )
+    rows = [
+        {
+            "total_seconds": 13.0,
+            "stage_seconds": {
+                "sparse_method_0": {"total": 1.0},
+                "sparse_method_1": {"total": 2.0},
+                "companion": {"total": 10.0},
+            },
+        }
+        for _ in range(8)
+    ]
+    report = runner._assemble_timing_smoke_report(
+        config,
+        resolved={
+            "config_digest": runner.canonical_digest(config),
+            "artifact_hashes": {"models_sha256": "model"},
+        },
+        rows=rows,
+        selection_digest="selection",
+        thread_quota={"threads_per_worker": 1},
+        cache_generation_timing=timing,
+    )
+    runner.atomic_json(tmp_path / "timing_smoke.json", report)
+    observed = runner.read_json(tmp_path / "timing_smoke.json")
+
+    expected_workload = 113 * (5 * 1.0 + 3 * 10.0) * 1.3
+    assert observed["cache_generation_timing"]["generation_seconds"] == 1506
+    assert observed["cache_generation_timing"]["provenance_sha256"] == runner.file_sha256(
+        provenance_path
+    )
+    assert observed["projection"]["cache_generation_seconds"] == 1506
+    assert observed["projection"]["projected_pod_hours"] == pytest.approx(
+        (1506 + expected_workload) / 3600
+    )
+    assert runner.verify_timing_smoke_gate(config, tmp_path) == observed
+
+
+def test_prepare_cache_adopts_prior_manifest_only_with_bound_provenance(
+    tmp_path: Path,
+):
+    config = copy.deepcopy(runner.load_config())
+    config["benchmark"]["datasets"] = ["opaque_task"]
+    config["benchmark"]["dataset_manifest_sha256"] = runner.canonical_digest(
+        config["benchmark"]["datasets"]
+    )
+    model_cache = tmp_path / "model-cache"
+    cache_path = runner.cache_files(config, model_cache)["opaque_task"]
+    cache_path.parent.mkdir(parents=True)
+    cache_path.write_bytes(b"immutable-cache")
+    old_cache = {
+        "schema_version": 1,
+        "complete": True,
+        "config_digest": "prior-config",
+        "model_cache": str(model_cache.resolve()),
+        "dataset_manifest_sha256": config["benchmark"]["dataset_manifest_sha256"],
+        "files": {
+            "opaque_task": {
+                "path": str(cache_path.resolve()),
+                "shape": [1, config["model"]["d_model"]],
+                "bytes": cache_path.stat().st_size,
+                "sha256": runner.file_sha256(cache_path),
+            }
+        },
+    }
+    source_root = tmp_path / "prior-output"
+    source_root.mkdir()
+    source_cache_ready = source_root / "cache_ready.json"
+    source_cache_ready.write_text(json.dumps(old_cache))
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    _write_json(
+        output_root / "resolved_config.json",
+        {"config_digest": runner.canonical_digest(config)},
+    )
+    provenance_path = output_root / "cold-cache.json"
+    with pytest.raises(RuntimeError, match="disagree with end minus start"):
+        runner.record_cold_cache_timing_provenance(
+            config=config,
+            source_cache_ready=source_cache_ready,
+            model_cache=model_cache,
+            start_unix_seconds=1784234613,
+            end_unix_seconds=1784236119,
+            expected_generation_seconds=1505,
+            output_path=provenance_path,
+        )
+    provenance_summary = runner.record_cold_cache_timing_provenance(
+        config=config,
+        source_cache_ready=source_cache_ready,
+        model_cache=model_cache,
+        start_unix_seconds=1784234613,
+        end_unix_seconds=1784236119,
+        expected_generation_seconds=1506,
+        output_path=provenance_path,
+    )
+    provenance = runner.read_json(provenance_path)
+
+    adopted = runner.prepare_cache(
+        config=config,
+        output_root=output_root,
+        model_cache=model_cache,
+        device="cpu",
+        cold_cache_provenance=provenance_path,
+    )
+
+    assert adopted["config_digest"] == runner.canonical_digest(config)
+    assert adopted["generation_seconds"] == 1506
+    assert provenance_summary["generation_seconds"] == 1506
+    assert adopted["generation_timing_source"] == "external_hash_bound_provenance"
+    assert adopted["adopted_from_cache_ready_sha256"] == provenance["source_cache_ready_sha256"]
+
+
+def test_worker_reuses_two_adapters_and_runs_sparse_before_companion(tmp_path: Path, monkeypatch):
+    config = runner.load_config()
+    runtime = config["runtime"]
+    sparse = runtime["sparse_worker_shards"][0]
+    companion = runtime["companion_seed_shards"][0]
+    timing_report = {
+        "projection": {"projected_pod_hours": 2.0},
+    }
+    (tmp_path / "timing_smoke.json").write_text(json.dumps(timing_report))
+    adapters = {method: SimpleNamespace(method=method) for method in ("mse", "dpsae")}
+    loaded = []
+    calls = []
+
+    monkeypatch.setattr(runner, "wait_cache", lambda **_kwargs: {"ready": True})
+    monkeypatch.setattr(runner, "verify_timing_smoke_gate", lambda *_args, **_kwargs: timing_report)
+
+    def fake_load_adapter(_config, _checkpoint_dir, method, _device):
+        loaded.append(method)
+        return adapters[method]
+
+    def fake_sparse_job(**kwargs):
+        calls.append(("sparse", kwargs["probe_seed"], kwargs["adapter"]))
+        return {"complete": True}
+
+    def fake_companion_job(**kwargs):
+        calls.append(("companion", kwargs["probe_seed"], kwargs["adapters"]))
+        return {"complete": True}
+
+    monkeypatch.setattr(runner, "load_adapter", fake_load_adapter)
+    monkeypatch.setattr(runner, "run_sparse_job", fake_sparse_job)
+    monkeypatch.setattr(runner, "run_companion_job", fake_companion_job)
+
+    result = runner.run_worker(
+        config=config,
+        output_root=tmp_path,
+        checkpoint_dir=tmp_path,
+        model_cache=tmp_path,
+        worker_index=0,
+        cache_role="wait",
+        method=sparse["method"],
+        probe_seeds=sparse["probe_seeds"],
+        companion_seeds=companion,
+        device="cpu",
+        dependency_preflight={},
+    )
+
+    assert loaded == ["mse", "dpsae"]
+    assert [kind for kind, _seed, _adapter in calls] == ["sparse"] * 5 + ["companion"] * 3
+    assert all(call[2] is adapters["mse"] for call in calls[:5])
+    assert all(call[2]["mse"] is adapters["mse"] for call in calls[5:])
+    assert all(call[2]["dpsae"] is adapters["dpsae"] for call in calls[5:])
+    assert result["sparse_job_count"] == 5
+    assert result["companion_job_count"] == 3
 
 
 def test_one_based_block_8_maps_to_transformerlens_block_7():

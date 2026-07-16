@@ -9,6 +9,7 @@ checkout of the pinned SAEBench commit for benchmark work.
 from __future__ import annotations
 
 import argparse
+import gc
 import hashlib
 import importlib
 import importlib.metadata
@@ -16,12 +17,13 @@ import inspect
 import json
 import math
 import os
+import resource
 import subprocess
 import sys
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import numpy as np
 import torch
@@ -84,7 +86,10 @@ def read_json(path: Path) -> Any:
 
 def load_config(path: Path = DEFAULT_CONFIG) -> dict[str, Any]:
     config = read_json(path)
-    if config.get("schema_version") != 1 or config.get("experiment_id") != "exp10_concept_discovery":
+    if (
+        config.get("schema_version") != 1
+        or config.get("experiment_id") != "exp10_concept_discovery"
+    ):
         raise ValueError("not an exp10 concept-discovery config")
     benchmark = config["benchmark"]
     datasets = benchmark["datasets"]
@@ -112,6 +117,43 @@ def load_config(path: Path = DEFAULT_CONFIG) -> dict[str, Any]:
         raise ValueError("one-based block and TransformerLens hook disagree")
     if config["adapter"]["decoder_renormalization"] != "forbidden":
         raise ValueError("exp10 forbids adapter-side decoder renormalization")
+    if benchmark.get("saebench_include_llm_baseline") is not False:
+        raise ValueError(
+            "SAEBench's duplicate residual baseline must remain disabled; the companion "
+            "evaluator retains it once per seed and task"
+        )
+    runtime = config["runtime"]
+    worker_count = int(runtime["worker_count"])
+    if worker_count != 4 or len(runtime["sparse_worker_shards"]) != worker_count:
+        raise ValueError("exp10 requires exactly four frozen sparse worker shards")
+    if len(runtime["companion_seed_shards"]) != worker_count:
+        raise ValueError("exp10 requires exactly four frozen companion seed shards")
+    sparse_pairs = [
+        (shard["method"], int(seed))
+        for shard in runtime["sparse_worker_shards"]
+        for seed in shard["probe_seeds"]
+    ]
+    expected_sparse_pairs = [(method, int(seed)) for method in ("mse", "dpsae") for seed in seeds]
+    if sorted(sparse_pairs) != sorted(expected_sparse_pairs):
+        raise ValueError("sparse worker shards must cover each method/seed pair exactly once")
+    companion_seeds = [int(seed) for shard in runtime["companion_seed_shards"] for seed in shard]
+    if sorted(companion_seeds) != sorted(seeds) or sorted(
+        len(shard) for shard in runtime["companion_seed_shards"]
+    ) != [2, 2, 3, 3]:
+        raise ValueError("companion shards must cover ten seeds exactly once as 3/3/2/2")
+    smoke = runtime["timing_smoke"]
+    if (
+        runtime.get("cold_cache_timing_source_policy")
+        != "in_process_monotonic_or_hash_bound_external_provenance"
+        or int(smoke["probe_seed"]) in seeds
+        or int(smoke["task_count"]) != 8
+        or int(smoke["quartile_count"]) != 4
+        or int(smoke["tasks_per_quartile"]) != 2
+        or float(smoke["headroom_multiplier"]) != 1.3
+        or float(smoke["maximum_projected_pod_hours"]) != 3.0
+        or int(smoke["projection_pair_units"]) != len(datasets) * len(seeds)
+    ):
+        raise ValueError("blind timing-smoke contract changed")
     return config
 
 
@@ -182,17 +224,12 @@ def assess_eligibility(
         method: abs(float(models[name]["inference_l0"]) - target_l0) / target_l0
         for method, name in names.items()
     }
-    pair_relative_l0 = abs(
-        float(dpsae["inference_l0"]) - float(mse["inference_l0"])
-    ) / target_l0
+    pair_relative_l0 = abs(float(dpsae["inference_l0"]) - float(mse["inference_l0"])) / target_l0
     checks["nmse_ratio"] = ratio <= float(gate["maximum_dpsae_to_mse_nmse_ratio"])
     checks["l0_target"] = all(
-        value <= float(gate["maximum_relative_l0_error"])
-        for value in relative_l0.values()
+        value <= float(gate["maximum_relative_l0_error"]) for value in relative_l0.values()
     )
-    checks["l0_pair_match"] = pair_relative_l0 <= float(
-        gate["maximum_pair_relative_l0_difference"]
-    )
+    checks["l0_pair_match"] = pair_relative_l0 <= float(gate["maximum_pair_relative_l0_difference"])
     checks["finite"] = _finite({"mse": mse, "dpsae": dpsae, "nmse_ratio": ratio})
     if gate["require_artifact_hash_match"]:
         checks["models_hash"] = evaluation.get("models_sha256") == hashes["models_sha256"]
@@ -359,9 +396,7 @@ def _resolve_object(qualified_name: str):
     return getattr(importlib.import_module(module_name), object_name)
 
 
-def verify_saebench_environment(
-    config: Mapping[str, Any], saebench_root: Path
-) -> dict[str, Any]:
+def verify_saebench_environment(config: Mapping[str, Any], saebench_root: Path) -> dict[str, Any]:
     """Require the exact clean source checkout and public APIs used by exp10."""
 
     root = saebench_root.expanduser().resolve()
@@ -435,15 +470,16 @@ def source_hashes(config_path: Path) -> dict[str, str]:
         config_path if config_path.is_absolute() else ROOT / config_path,
         Path(__file__).resolve(),
         ROOT / "src/dpsae/saebench_adapter.py",
+        ROOT / "scripts/audit_exp10_artifacts.py",
+        ROOT / "scripts/run_exp10_concept_4xa40.sh",
+        ROOT / "scripts/run_exp10_timing_smoke_a40.sh",
     ]
     resolved = [path.resolve() for path in paths]
     return {str(path.relative_to(ROOT)): file_sha256(path) for path in resolved}
 
 
 def repository_state() -> dict[str, Any]:
-    revision = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
-    ).strip()
+    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     status = subprocess.check_output(
         ["git", "status", "--porcelain=v1", "--untracked-files=all"],
         cwd=ROOT,
@@ -558,8 +594,17 @@ def verify_cache_ready(
     observed = read_json(path)
     if observed.get("config_digest") != resolved["config_digest"]:
         raise RuntimeError("activation cache belongs to another resolved config")
+    _verify_cache_manifest_inputs(config, observed, model_cache)
+    return observed
+
+
+def _verify_cache_manifest_inputs(
+    config: Mapping[str, Any], observed: Mapping[str, Any], model_cache: Path
+) -> None:
     if set(observed.get("files", {})) != set(config["benchmark"]["datasets"]):
         raise RuntimeError("activation cache manifest dataset set changed")
+    if observed.get("dataset_manifest_sha256") != config["benchmark"]["dataset_manifest_sha256"]:
+        raise RuntimeError("activation cache dataset manifest changed")
     for dataset, cache_path in cache_files(config, model_cache).items():
         record = observed["files"][dataset]
         if str(cache_path.resolve()) != record.get("path") or not cache_path.is_file():
@@ -568,7 +613,6 @@ def verify_cache_ready(
             raise RuntimeError(f"activation cache size changed for {dataset}")
         if "sha256" not in record:
             raise RuntimeError(f"activation cache lacks a frozen hash for {dataset}")
-    return observed
 
 
 def prepare_cache(
@@ -577,11 +621,40 @@ def prepare_cache(
     output_root: Path,
     model_cache: Path,
     device: str,
+    cold_cache_provenance: Path | None = None,
 ) -> dict[str, Any]:
     resolved = load_resolved(output_root, config)
     ready = output_root / "cache_ready.json"
     if ready.exists():
-        return verify_cache_ready(config, output_root, model_cache)
+        observed = read_json(ready)
+        if observed.get("config_digest") == resolved["config_digest"]:
+            return verify_cache_ready(config, output_root, model_cache)
+        if cold_cache_provenance is None or not cold_cache_provenance.is_file():
+            raise RuntimeError(
+                "existing cache belongs to the prior config; provide hash-bound cold-cache "
+                "timing provenance to adopt it without regeneration"
+            )
+        return _adopt_cache_from_provenance(
+            config=config,
+            resolved=resolved,
+            output_root=output_root,
+            model_cache=model_cache,
+            source_cache_ready=ready,
+            provenance_path=cold_cache_provenance,
+        )
+    if cold_cache_provenance is not None and cold_cache_provenance.is_file():
+        provenance = read_json(cold_cache_provenance)
+        source_value = provenance.get("source_cache_ready_path")
+        if isinstance(source_value, str) and Path(source_value).expanduser().is_file():
+            return _adopt_cache_from_provenance(
+                config=config,
+                resolved=resolved,
+                output_root=output_root,
+                model_cache=model_cache,
+                source_cache_ready=Path(source_value).expanduser().resolve(),
+                provenance_path=cold_cache_provenance,
+            )
+    generation_started = time.monotonic()
     lock = output_root / "cache_writer.lock"
     output_root.mkdir(parents=True, exist_ok=True)
     try:
@@ -601,6 +674,8 @@ def prepare_cache(
             device=device,
         )
         manifest = _cache_manifest(config, model_cache, resolved["config_digest"])
+        manifest["generation_seconds"] = time.monotonic() - generation_started
+        manifest["generation_timing_source"] = "in_process_monotonic"
         atomic_json(ready, manifest)
         return manifest
     finally:
@@ -622,9 +697,7 @@ def wait_cache(
     return verify_cache_ready(config, output_root, model_cache)
 
 
-def _job_dir(
-    config: Mapping[str, Any], output_root: Path, method: str, probe_seed: int
-) -> Path:
+def _job_dir(config: Mapping[str, Any], output_root: Path, method: str, probe_seed: int) -> Path:
     checkpoint_id = config["pilot_checkpoint"]["checkpoint_id"]
     return output_root / "jobs" / checkpoint_id / method / f"seed_{probe_seed}"
 
@@ -632,8 +705,7 @@ def _job_dir(
 def _raw_sparse_files(job_dir: Path, model_name: str, hook_name: str) -> list[Path]:
     return sorted(
         job_dir.glob(
-            f"raw/*_custom_sae/sae_probes_{model_name}/normal_setting/"
-            f"*_{hook_name}_l1.json"
+            f"raw/*_custom_sae/sae_probes_{model_name}/normal_setting/*_{hook_name}_l1.json"
         )
     )
 
@@ -673,9 +745,7 @@ def _heldout_identity(
         "hook_name": config["model"]["hook_name"],
     }
     split_id = f"exp10-test-{canonical_digest(split_payload)[:20]}"
-    example_ids = [
-        f"{split_id}-{index:05d}" for index in range(example_count)
-    ]
+    example_ids = [f"{split_id}-{index:05d}" for index in range(example_count)]
     return {
         "split": "test",
         "split_id": split_id,
@@ -711,9 +781,10 @@ def capture_sparse_provenance(
 
     model = config["model"]
     benchmark = config["benchmark"]
-    raw_by_dataset = {_parse_dataset(path): path for path in _raw_sparse_files(
-        job_dir, model["transformer_lens_name"], model["hook_name"]
-    )}
+    raw_by_dataset = {
+        _parse_dataset(path): path
+        for path in _raw_sparse_files(job_dir, model["transformer_lens_name"], model["hook_name"])
+    }
     expected = set(benchmark["datasets"])
     if set(raw_by_dataset) != expected:
         missing = sorted(expected.difference(raw_by_dataset))
@@ -730,11 +801,9 @@ def capture_sparse_provenance(
                 raise RuntimeError(f"stale sparse provenance for {dataset}")
             if observed.get("raw_result_sha256") != file_sha256(raw_by_dataset[dataset]):
                 raise RuntimeError(f"raw sparse result changed for {dataset}")
-            if (
-                not predictions_path.is_file()
-                or observed.get("heldout_predictions_sha256")
-                != file_sha256(predictions_path)
-            ):
+            if not predictions_path.is_file() or observed.get(
+                "heldout_predictions_sha256"
+            ) != file_sha256(predictions_path):
                 raise RuntimeError(f"held-out sparse predictions changed for {dataset}")
             hashes[dataset] = file_sha256(output)
             continue
@@ -848,6 +917,7 @@ def run_sparse_job(
     method: str,
     probe_seed: int,
     device: str,
+    adapter: NativeBatchTopKSAEBenchAdapter | None = None,
 ) -> dict[str, Any]:
     resolved = load_resolved(output_root, config)
     verify_cache_ready(config, output_root, model_cache)
@@ -867,13 +937,15 @@ def run_sparse_job(
                 raise RuntimeError(f"completed sparse provenance changed for {dataset}")
             record = read_json(path)
             predictions = job_dir / "predictions" / f"{dataset}.pt"
-            if (
-                not predictions.is_file()
-                or record.get("heldout_predictions_sha256") != file_sha256(predictions)
+            if not predictions.is_file() or record.get("heldout_predictions_sha256") != file_sha256(
+                predictions
             ):
                 raise RuntimeError(f"completed sparse predictions changed for {dataset}")
         return value
-    adapter = load_adapter(config, checkpoint_dir, method, torch.device(device))
+    if adapter is None:
+        adapter = load_adapter(config, checkpoint_dir, method, torch.device(device))
+    elif adapter.method != method:
+        raise ValueError(f"cached adapter method {adapter.method!r} does not match {method!r}")
 
     from sae_bench.evals.sparse_probing_sae_probes.eval_config import (
         SparseProbingSaeProbesEvalConfig,
@@ -892,7 +964,7 @@ def run_sparse_job(
         binarize=False,
         results_path=str(job_dir / "raw"),
         model_cache_path=str(model_cache),
-        include_llm_baseline=True,
+        include_llm_baseline=bool(config["benchmark"]["saebench_include_llm_baseline"]),
         baseline_method="logreg",
     )
     run_eval(
@@ -956,6 +1028,7 @@ def run_companion_job(
     model_cache: Path,
     probe_seed: int,
     device: str,
+    adapters: Mapping[str, NativeBatchTopKSAEBenchAdapter] | None = None,
 ) -> dict[str, Any]:
     resolved = load_resolved(output_root, config)
     verify_cache_ready(config, output_root, model_cache)
@@ -975,10 +1048,15 @@ def run_companion_job(
     from sae_probes.utils_training import find_best_reg
 
     torch_device = torch.device(device)
-    adapters = {
-        method: load_adapter(config, checkpoint_dir, method, torch_device)
-        for method in ("mse", "dpsae")
-    }
+    if adapters is None:
+        adapters = {
+            method: load_adapter(config, checkpoint_dir, method, torch_device)
+            for method in ("mse", "dpsae")
+        }
+    if set(adapters) != {"mse", "dpsae"} or any(
+        adapters[method].method != method for method in ("mse", "dpsae")
+    ):
+        raise ValueError("cached companion adapters must contain exact MSE and DPSAE models")
     dataset_hashes = {}
     for dataset in config["benchmark"]["datasets"]:
         metrics_path = job_dir / "metrics" / f"{dataset}.json"
@@ -1023,12 +1101,8 @@ def run_companion_job(
             train_code, train_reconstruction = _representations(
                 adapter, X_train, device=torch_device
             )
-            test_code, test_reconstruction = _representations(
-                adapter, X_test, device=torch_device
-            )
-            full_code = find_best_reg(
-                train_code, y_train, test_code, y_test, seed=probe_seed
-            )
+            test_code, test_reconstruction = _representations(adapter, X_test, device=torch_device)
+            full_code = find_best_reg(train_code, y_train, test_code, y_test, seed=probe_seed)
             reconstruction = find_best_reg(
                 train_reconstruction,
                 y_train,
@@ -1046,9 +1120,7 @@ def run_companion_job(
             }
             weights["heldout"]["methods"][method] = {
                 "full_code": _heldout_classifier_outputs(full_code, test_code),
-                "reconstruction": _heldout_classifier_outputs(
-                    reconstruction, test_reconstruction
-                ),
+                "reconstruction": _heldout_classifier_outputs(reconstruction, test_reconstruction),
             }
         atomic_torch(weights_path, weights)
         record = {
@@ -1082,16 +1154,702 @@ def run_companion_job(
     return result
 
 
+@torch.inference_mode()
+def _encode_only(
+    adapter: NativeBatchTopKSAEBenchAdapter,
+    activation: Tensor,
+    *,
+    device: torch.device,
+    batch_size: int = 128,
+) -> Tensor:
+    return torch.cat(
+        [adapter.encode(batch.to(device)).cpu() for batch in activation.split(batch_size)]
+    )
+
+
+def _synchronize(device: torch.device) -> None:
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+
+
+def _timed_call(device: torch.device, function: Callable[[], Any]) -> tuple[Any, float]:
+    _synchronize(device)
+    started = time.perf_counter()
+    value = function()
+    _synchronize(device)
+    return value, time.perf_counter() - started
+
+
+def select_timing_smoke_tasks(
+    config: Mapping[str, Any], dataset_sizes: Mapping[str, int]
+) -> list[dict[str, Any]]:
+    """Select two tasks per size quartile without consulting concept outcomes."""
+
+    datasets = list(config["benchmark"]["datasets"])
+    if set(datasets) != set(dataset_sizes):
+        missing = sorted(set(datasets).difference(dataset_sizes))
+        extra = sorted(set(dataset_sizes).difference(datasets))
+        raise ValueError(f"timing dataset-size manifest drift: missing={missing}, extra={extra}")
+    manifest_index = {dataset: index for index, dataset in enumerate(datasets)}
+    ordered = sorted(datasets, key=lambda name: (int(dataset_sizes[name]), manifest_index[name]))
+    buckets = [list(bucket) for bucket in np.array_split(np.asarray(ordered, dtype=object), 4)]
+    selected = []
+    for quartile, bucket in enumerate(buckets):
+        if len(bucket) < 2:
+            raise RuntimeError("timing smoke needs at least two tasks in every size quartile")
+        positions = [len(bucket) // 3, (2 * len(bucket)) // 3]
+        if positions[0] == positions[1]:
+            positions[1] = min(len(bucket) - 1, positions[0] + 1)
+        for sample, position in enumerate(positions):
+            dataset = str(bucket[position])
+            size = int(dataset_sizes[dataset])
+            selected.append(
+                {
+                    "slot": f"quartile_{quartile}_sample_{sample}",
+                    "quartile": quartile,
+                    "dataset": dataset,
+                    "dataset_size": size,
+                    "n_train": min(size - 100, 1024),
+                }
+            )
+    if len(selected) != 8 or len({item["dataset"] for item in selected}) != 8:
+        raise RuntimeError("timing smoke must select eight distinct tasks")
+    return selected
+
+
+def _fit_sparse_smoke(
+    *,
+    codes: Mapping[str, tuple[Tensor, Tensor]],
+    y_train: Any,
+    y_test: Any,
+    ks: Sequence[int],
+    probe_seed: int,
+) -> None:
+    from sae_probes.run_sae_evals import get_sorted_indices, mean_act_normalization
+    from sae_probes.utils_training import find_best_reg
+
+    for train_code, test_code in codes.values():
+        ranking = get_sorted_indices(train_code, y_train, normalize_fn=mean_act_normalization)
+        for k in ks:
+            feature_ids = ranking[: int(k)]
+            result = find_best_reg(
+                X_train=train_code[:, feature_ids],
+                y_train=y_train,
+                X_test=test_code[:, feature_ids],
+                y_test=y_test,
+                penalty="l1",
+                seed=probe_seed,
+            )
+            del result
+
+
+def _peak_rss_mib() -> float:
+    value = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    if sys.platform == "darwin":
+        return value / (1024 * 1024)
+    return value / 1024
+
+
+def _timing_thread_quota(config: Mapping[str, Any]) -> dict[str, Any]:
+    if hasattr(os, "sched_getaffinity"):
+        cpu_count = len(os.sched_getaffinity(0))
+    else:
+        cpu_count = int(os.cpu_count() or 1)
+    worker_count = int(config["runtime"]["worker_count"])
+    expected = max(1, cpu_count // worker_count)
+    variables = (
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    )
+    observed = {name: os.environ.get(name) for name in variables}
+    if any(value is None or int(value) != expected for value in observed.values()):
+        raise RuntimeError(
+            f"timing smoke requires every BLAS/OpenMP thread cap to equal {expected}: {observed}"
+        )
+    return {
+        "visible_cpu_count": cpu_count,
+        "worker_count": worker_count,
+        "threads_per_worker": expected,
+        "environment": observed,
+    }
+
+
+def _cache_file_hashes_digest(cache: Mapping[str, Any]) -> str:
+    files = cache.get("files", {})
+    hashes = {dataset: record.get("sha256") for dataset, record in files.items()}
+    if not hashes or any(not value for value in hashes.values()):
+        raise RuntimeError("cache timing provenance requires every frozen cache-file hash")
+    return canonical_digest(hashes)
+
+
+def _validate_external_cache_timing(
+    cache: Mapping[str, Any],
+    *,
+    output_root: Path,
+    model_cache: Path,
+    provenance_path: Path,
+    source_ready_sha256: str | None = None,
+    source_ready_path: Path | None = None,
+) -> dict[str, Any]:
+    provenance = read_json(provenance_path)
+    if provenance.get("schema_version") != 1 or provenance.get("complete") is not True:
+        raise RuntimeError("cold-cache timing provenance schema is invalid")
+    expected_source_hash = (
+        source_ready_sha256
+        or cache.get("adopted_from_cache_ready_sha256")
+        or file_sha256(output_root / "cache_ready.json")
+    )
+    expected_model_cache = str(model_cache.resolve())
+    expected_file_hashes = _cache_file_hashes_digest(cache)
+    provenance_source_path = provenance.get("source_cache_ready_path")
+    if not isinstance(provenance_source_path, str) or not provenance_source_path:
+        raise RuntimeError("cold-cache timing provenance lacks its source manifest path")
+    if (
+        source_ready_path is not None
+        and Path(provenance_source_path).expanduser().resolve() != source_ready_path.resolve()
+    ):
+        raise RuntimeError("cold-cache timing provenance source path changed")
+    if provenance.get("source_cache_ready_sha256") != expected_source_hash:
+        raise RuntimeError("cold-cache timing provenance is bound to another cache manifest")
+    if (
+        provenance.get("model_cache_path") != expected_model_cache
+        or cache.get("model_cache") != expected_model_cache
+    ):
+        raise RuntimeError("cold-cache timing provenance model-cache path changed")
+    if provenance.get("cache_file_hashes_sha256") != expected_file_hashes:
+        raise RuntimeError("cold-cache timing provenance file-hash manifest changed")
+    start = float(provenance.get("start_unix_seconds", math.nan))
+    end = float(provenance.get("end_unix_seconds", math.nan))
+    elapsed = float(provenance.get("generation_seconds", math.nan))
+    if (
+        not all(math.isfinite(value) for value in (start, end, elapsed))
+        or elapsed <= 0
+        or end <= start
+        or not math.isclose(end - start, elapsed, abs_tol=1e-6, rel_tol=0)
+    ):
+        raise RuntimeError("cold-cache timing interval is invalid")
+    provenance_sha256 = file_sha256(provenance_path)
+    expected_provenance_sha256 = cache.get("cache_generation_timing_provenance_sha256")
+    if expected_provenance_sha256 is not None and expected_provenance_sha256 != provenance_sha256:
+        raise RuntimeError("cold-cache timing provenance hash changed after cache adoption")
+    return {
+        "source": "external_hash_bound_provenance",
+        "generation_seconds": elapsed,
+        "start_unix_seconds": start,
+        "end_unix_seconds": end,
+        "provenance_path": str(provenance_path.resolve()),
+        "provenance_sha256": provenance_sha256,
+        "source_cache_ready_sha256": expected_source_hash,
+        "source_cache_ready_path": provenance_source_path,
+        "model_cache_path": expected_model_cache,
+        "cache_file_hashes_sha256": expected_file_hashes,
+    }
+
+
+def _adopt_cache_from_provenance(
+    *,
+    config: Mapping[str, Any],
+    resolved: Mapping[str, Any],
+    output_root: Path,
+    model_cache: Path,
+    source_cache_ready: Path,
+    provenance_path: Path,
+) -> dict[str, Any]:
+    observed = read_json(source_cache_ready)
+    _verify_cache_manifest_inputs(config, observed, model_cache)
+    source_ready_sha256 = file_sha256(source_cache_ready)
+    timing = _validate_external_cache_timing(
+        observed,
+        output_root=output_root,
+        model_cache=model_cache,
+        provenance_path=provenance_path,
+        source_ready_sha256=source_ready_sha256,
+        source_ready_path=source_cache_ready,
+    )
+    adopted = dict(observed)
+    adopted.update(
+        {
+            "config_digest": resolved["config_digest"],
+            "adopted_from_cache_ready_path": str(source_cache_ready.resolve()),
+            "adopted_from_cache_ready_sha256": source_ready_sha256,
+            "generation_seconds": timing["generation_seconds"],
+            "generation_timing_source": "external_hash_bound_provenance",
+            "cache_generation_timing_provenance_sha256": timing["provenance_sha256"],
+        }
+    )
+    atomic_json(output_root / "cache_ready.json", adopted)
+    return verify_cache_ready(config, output_root, model_cache)
+
+
+def record_cold_cache_timing_provenance(
+    *,
+    config: Mapping[str, Any],
+    source_cache_ready: Path,
+    model_cache: Path,
+    start_unix_seconds: int,
+    end_unix_seconds: int,
+    expected_generation_seconds: int,
+    output_path: Path,
+) -> dict[str, Any]:
+    source_cache_ready = source_cache_ready.resolve()
+    model_cache = model_cache.resolve()
+    cache = read_json(source_cache_ready)
+    _verify_cache_manifest_inputs(config, cache, model_cache)
+    elapsed = int(end_unix_seconds) - int(start_unix_seconds)
+    if elapsed <= 0:
+        raise ValueError("cold-cache end time must be later than its start time")
+    if elapsed != int(expected_generation_seconds):
+        raise RuntimeError("supplied cold-cache generation seconds disagree with end minus start")
+    recorded_elapsed = cache.get("generation_seconds")
+    if recorded_elapsed is not None and not math.isclose(
+        float(recorded_elapsed), float(elapsed), abs_tol=1e-6, rel_tol=0
+    ):
+        raise RuntimeError(
+            "cache manifest generation time disagrees with the supplied wall-clock interval"
+        )
+    provenance = {
+        "schema_version": 1,
+        "complete": True,
+        "source": "external_wall_clock_interval",
+        "start_unix_seconds": int(start_unix_seconds),
+        "end_unix_seconds": int(end_unix_seconds),
+        "generation_seconds": elapsed,
+        "source_cache_ready_path": str(source_cache_ready),
+        "source_cache_ready_sha256": file_sha256(source_cache_ready),
+        "model_cache_path": str(model_cache),
+        "cache_file_hashes_sha256": _cache_file_hashes_digest(cache),
+    }
+    atomic_json(output_path, provenance)
+    validated = _validate_external_cache_timing(
+        cache,
+        output_root=source_cache_ready.parent,
+        model_cache=model_cache,
+        provenance_path=output_path,
+        source_ready_sha256=provenance["source_cache_ready_sha256"],
+        source_ready_path=source_cache_ready,
+    )
+    return {
+        "schema_version": 1,
+        "complete": True,
+        "output_path": str(output_path.resolve()),
+        "output_sha256": file_sha256(output_path),
+        "generation_seconds": validated["generation_seconds"],
+        "source_cache_ready_sha256": validated["source_cache_ready_sha256"],
+        "cache_file_hashes_sha256": validated["cache_file_hashes_sha256"],
+    }
+
+
+def _resolve_cache_generation_timing(
+    cache: Mapping[str, Any],
+    *,
+    output_root: Path,
+    model_cache: Path,
+    provenance_path: Path | None,
+) -> dict[str, Any]:
+    if provenance_path is not None and provenance_path.is_file():
+        return _validate_external_cache_timing(
+            cache,
+            output_root=output_root,
+            model_cache=model_cache,
+            provenance_path=provenance_path,
+        )
+    if cache.get("generation_timing_source") == "external_hash_bound_provenance":
+        raise RuntimeError("adopted cache requires its exact cold-cache provenance JSON")
+    elapsed = float(cache.get("generation_seconds", math.nan))
+    if not math.isfinite(elapsed) or elapsed <= 0:
+        raise RuntimeError(
+            "cache manifest lacks cold generation time; provide hash-bound external provenance"
+        )
+    return {
+        "source": "in_process_monotonic",
+        "generation_seconds": elapsed,
+        "source_cache_ready_sha256": file_sha256(output_root / "cache_ready.json"),
+        "model_cache_path": str(model_cache.resolve()),
+        "cache_file_hashes_sha256": _cache_file_hashes_digest(cache),
+    }
+
+
+def _project_timing_smoke(
+    config: Mapping[str, Any],
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    cache_generation_seconds: float,
+) -> dict[str, Any]:
+    if not rows:
+        raise ValueError("timing projection requires at least one measured task")
+    smoke = config["runtime"]["timing_smoke"]
+    method_slots = {"mse": "sparse_method_0", "dpsae": "sparse_method_1"}
+    component_p95_seconds = {
+        slot: float(
+            np.quantile(
+                np.asarray(
+                    [row["stage_seconds"][slot]["total"] for row in rows],
+                    dtype=np.float64,
+                ),
+                0.95,
+            )
+        )
+        for slot in (*method_slots.values(), "companion")
+    }
+    pair_units = int(smoke["projection_pair_units"])
+    dataset_count = len(config["benchmark"]["datasets"])
+    expected_pair_units = dataset_count * len(config["benchmark"]["probe_seeds"])
+    if pair_units != expected_pair_units:
+        raise RuntimeError("timing projection units differ from the frozen dataset-seed grid")
+    headroom = float(smoke["headroom_multiplier"])
+    worker_projections = []
+    for worker_index, sparse_shard in enumerate(config["runtime"]["sparse_worker_shards"]):
+        sparse_slot = method_slots[sparse_shard["method"]]
+        sparse_seed_count = len(sparse_shard["probe_seeds"])
+        companion_seed_count = len(config["runtime"]["companion_seed_shards"][worker_index])
+        unpadded_seconds = dataset_count * (
+            sparse_seed_count * component_p95_seconds[sparse_slot]
+            + companion_seed_count * component_p95_seconds["companion"]
+        )
+        worker_projections.append(
+            {
+                "worker_index": worker_index,
+                "sparse_slot": sparse_slot,
+                "sparse_seed_count": sparse_seed_count,
+                "companion_seed_count": companion_seed_count,
+                "p95_workload_seconds": unpadded_seconds,
+                "p95_workload_seconds_with_headroom": unpadded_seconds * headroom,
+            }
+        )
+    projected_workload_seconds = max(
+        item["p95_workload_seconds_with_headroom"] for item in worker_projections
+    )
+    projected_pod_hours = (float(cache_generation_seconds) + projected_workload_seconds) / 3600
+    task_p95_seconds = float(
+        np.quantile(
+            np.asarray([row["total_seconds"] for row in rows], dtype=np.float64),
+            0.95,
+        )
+    )
+    return {
+        "task_p95_seconds": task_p95_seconds,
+        "component_p95_seconds": component_p95_seconds,
+        "headroom_multiplier": headroom,
+        "dataset_count": dataset_count,
+        "pair_units": pair_units,
+        "worker_projections": worker_projections,
+        "cache_generation_seconds": float(cache_generation_seconds),
+        "projected_workload_seconds_with_headroom": projected_workload_seconds,
+        "projected_pod_hours": projected_pod_hours,
+        "maximum_projected_pod_hours": float(smoke["maximum_projected_pod_hours"]),
+    }
+
+
+def _assemble_timing_smoke_report(
+    config: Mapping[str, Any],
+    *,
+    resolved: Mapping[str, Any],
+    rows: Sequence[Mapping[str, Any]],
+    selection_digest: str,
+    thread_quota: Mapping[str, Any],
+    cache_generation_timing: Mapping[str, Any],
+) -> dict[str, Any]:
+    smoke = config["runtime"]["timing_smoke"]
+    projection = _project_timing_smoke(
+        config,
+        rows,
+        cache_generation_seconds=float(cache_generation_timing["generation_seconds"]),
+    )
+    passed = projection["projected_pod_hours"] <= float(smoke["maximum_projected_pod_hours"])
+    return {
+        "schema_version": 1,
+        "complete": True,
+        "passed": passed,
+        "config_digest": resolved["config_digest"],
+        "artifact_hashes": resolved["artifact_hashes"],
+        "probe_seed": int(smoke["probe_seed"]),
+        "task_count": len(rows),
+        "selection_policy": smoke["selection"],
+        "selection_manifest_sha256": selection_digest,
+        "names_and_concept_results_suppressed": True,
+        "saved_concept_metric_count": 0,
+        "thread_quota": dict(thread_quota),
+        "cache_generation_timing": dict(cache_generation_timing),
+        "tasks": list(rows),
+        "projection": projection,
+    }
+
+
+def run_timing_smoke(
+    *,
+    config: Mapping[str, Any],
+    output_root: Path,
+    checkpoint_dir: Path,
+    model_cache: Path,
+    device: str,
+    cold_cache_provenance: Path | None = None,
+) -> dict[str, Any]:
+    """Time the frozen workload while discarding every concept-facing result."""
+
+    resolved = load_resolved(output_root, config)
+    cache = verify_cache_ready(config, output_root, model_cache)
+    cache_generation_timing = _resolve_cache_generation_timing(
+        cache,
+        output_root=output_root,
+        model_cache=model_cache,
+        provenance_path=cold_cache_provenance,
+    )
+    smoke = config["runtime"]["timing_smoke"]
+    probe_seed = int(smoke["probe_seed"])
+    if probe_seed in config["benchmark"]["probe_seeds"]:
+        raise RuntimeError("timing smoke seed must remain outside the report seed set")
+    thread_quota = _timing_thread_quota(config)
+
+    from sae_probes.run_sae_evals import DATASET_SIZES
+    from sae_probes.utils_data import get_xy_traintest
+    from sae_probes.utils_training import find_best_reg
+
+    selected = select_timing_smoke_tasks(
+        config,
+        {dataset: int(DATASET_SIZES[dataset]) for dataset in config["benchmark"]["datasets"]},
+    )
+    selection_digest = canonical_digest(
+        [
+            {"slot": item["slot"], "dataset": item["dataset"], "size": item["dataset_size"]}
+            for item in selected
+        ]
+    )
+    torch_device = torch.device(device)
+    adapters = {
+        method: load_adapter(config, checkpoint_dir, method, torch_device)
+        for method in ("mse", "dpsae")
+    }
+    method_slots = {"mse": "sparse_method_0", "dpsae": "sparse_method_1"}
+    rows = []
+    for item in selected:
+        if torch_device.type == "cuda":
+            torch.cuda.reset_peak_memory_stats(torch_device)
+        task_started = time.perf_counter()
+        dataset = item["dataset"]
+        n_train = int(item["n_train"])
+
+        def load_task() -> tuple[Any, Any, Any, Any]:
+            return get_xy_traintest(
+                n_train,
+                dataset,
+                config["model"]["hook_name"],
+                model_name=config["model"]["transformer_lens_name"],
+                model_cache_path=model_cache,
+                seed=probe_seed,
+            )
+
+        sparse_stages: dict[str, dict[str, float]] = {}
+        for method, adapter in adapters.items():
+            stage: dict[str, float] = {}
+            for pass_name in ("primary", "provenance"):
+                loaded, load_seconds = _timed_call(torch_device, load_task)
+                X_train, y_train, X_test, y_test = loaded
+                codes, encode_seconds = _timed_call(
+                    torch_device,
+                    lambda: {
+                        method: (
+                            _encode_only(adapter, X_train, device=torch_device),
+                            _encode_only(adapter, X_test, device=torch_device),
+                        )
+                    },
+                )
+                _, fit_seconds = _timed_call(
+                    torch_device,
+                    lambda: _fit_sparse_smoke(
+                        codes=codes,
+                        y_train=y_train,
+                        y_test=y_test,
+                        ks=config["benchmark"]["ks"],
+                        probe_seed=probe_seed,
+                    ),
+                )
+                stage[f"{pass_name}_data_load"] = load_seconds
+                stage[f"{pass_name}_encode"] = encode_seconds
+                stage[f"{pass_name}_l1"] = fit_seconds
+                codes = None
+                loaded = None
+            stage["total"] = sum(stage.values())
+            sparse_stages[method_slots[method]] = stage
+
+        loaded, companion_data_seconds = _timed_call(torch_device, load_task)
+        X_train, y_train, X_test, y_test = loaded
+        companion_representations, companion_encode_seconds = _timed_call(
+            torch_device,
+            lambda: {
+                method: (
+                    *_representations(adapter, X_train, device=torch_device),
+                    *_representations(adapter, X_test, device=torch_device),
+                )
+                for method, adapter in adapters.items()
+            },
+        )
+        _, original_l2_seconds = _timed_call(
+            torch_device,
+            lambda: find_best_reg(X_train, y_train, X_test, y_test, seed=probe_seed),
+        )
+
+        def fit_full_codes() -> None:
+            for (
+                train_code,
+                _train_recon,
+                test_code,
+                _test_recon,
+            ) in companion_representations.values():
+                find_best_reg(train_code, y_train, test_code, y_test, seed=probe_seed)
+
+        _, full_code_l2_seconds = _timed_call(torch_device, fit_full_codes)
+
+        def fit_reconstructions() -> None:
+            for (
+                _train_code,
+                train_recon,
+                _test_code,
+                test_recon,
+            ) in companion_representations.values():
+                find_best_reg(train_recon, y_train, test_recon, y_test, seed=probe_seed)
+
+        _, reconstruction_l2_seconds = _timed_call(torch_device, fit_reconstructions)
+        companion_stage = {
+            "data_load": companion_data_seconds,
+            "encode_decode": companion_encode_seconds,
+            "original_l2": original_l2_seconds,
+            "full_code_l2": full_code_l2_seconds,
+            "reconstruction_l2": reconstruction_l2_seconds,
+        }
+        companion_stage["total"] = sum(companion_stage.values())
+        total_seconds = time.perf_counter() - task_started
+        gpu_allocated = (
+            int(torch.cuda.max_memory_allocated(torch_device)) if torch_device.type == "cuda" else 0
+        )
+        gpu_reserved = (
+            int(torch.cuda.max_memory_reserved(torch_device)) if torch_device.type == "cuda" else 0
+        )
+        rows.append(
+            {
+                "slot": item["slot"],
+                "quartile": item["quartile"],
+                "n_train": len(X_train),
+                "n_test": len(X_test),
+                "stage_seconds": {
+                    **sparse_stages,
+                    "companion": companion_stage,
+                },
+                "total_seconds": total_seconds,
+                "peak_rss_mib": _peak_rss_mib(),
+                "peak_gpu_allocated_bytes": gpu_allocated,
+                "peak_gpu_reserved_bytes": gpu_reserved,
+            }
+        )
+        companion_representations = None
+        loaded = None
+        gc.collect()
+        if torch_device.type == "cuda":
+            torch.cuda.empty_cache()
+
+    report = _assemble_timing_smoke_report(
+        config,
+        resolved=resolved,
+        rows=rows,
+        selection_digest=selection_digest,
+        thread_quota=thread_quota,
+        cache_generation_timing=cache_generation_timing,
+    )
+    atomic_json(output_root / "timing_smoke.json", report)
+    return report
+
+
+def verify_timing_smoke_gate(config: Mapping[str, Any], output_root: Path) -> dict[str, Any]:
+    path = output_root / "timing_smoke.json"
+    if not path.is_file():
+        raise RuntimeError("run the blind timing smoke before starting exp10 workers")
+    report = read_json(path)
+    smoke = config["runtime"]["timing_smoke"]
+    required = {
+        "complete": True,
+        "passed": True,
+        "config_digest": canonical_digest(config),
+        "probe_seed": int(smoke["probe_seed"]),
+        "task_count": int(smoke["task_count"]),
+        "names_and_concept_results_suppressed": True,
+        "saved_concept_metric_count": 0,
+    }
+    for key, expected in required.items():
+        if report.get(key) != expected:
+            raise RuntimeError(
+                f"timing-smoke gate failed for {key}: expected {expected!r}, "
+                f"observed {report.get(key)!r}"
+            )
+    projected = float(report.get("projection", {}).get("projected_pod_hours", math.inf))
+    if projected > float(smoke["maximum_projected_pod_hours"]):
+        raise RuntimeError("blind timing projection exceeds the frozen pod-hour limit")
+    timing = report.get("cache_generation_timing", {})
+    generation_seconds = float(timing.get("generation_seconds", math.nan))
+    projected_cache_seconds = float(
+        report.get("projection", {}).get("cache_generation_seconds", math.nan)
+    )
+    if (
+        not math.isfinite(generation_seconds)
+        or generation_seconds <= 0
+        or not math.isclose(
+            generation_seconds,
+            projected_cache_seconds,
+            abs_tol=1e-6,
+            rel_tol=0,
+        )
+    ):
+        raise RuntimeError("timing-smoke projection did not use its cold-cache duration")
+    source = timing.get("source")
+    ready_path = output_root / "cache_ready.json"
+    ready = read_json(ready_path)
+    if source == "external_hash_bound_provenance":
+        provenance_path = Path(str(timing.get("provenance_path", "")))
+        if not provenance_path.is_file() or file_sha256(provenance_path) != timing.get(
+            "provenance_sha256"
+        ):
+            raise RuntimeError("timing-smoke external cache provenance changed")
+        provenance = read_json(provenance_path)
+        for key in (
+            "generation_seconds",
+            "start_unix_seconds",
+            "end_unix_seconds",
+            "source_cache_ready_path",
+            "source_cache_ready_sha256",
+            "model_cache_path",
+            "cache_file_hashes_sha256",
+        ):
+            if provenance.get(key) != timing.get(key):
+                raise RuntimeError(f"timing-smoke cache provenance drift for {key}")
+        expected_source_hash = ready.get("adopted_from_cache_ready_sha256") or file_sha256(
+            ready_path
+        )
+        if timing.get("source_cache_ready_sha256") != expected_source_hash:
+            raise RuntimeError("timing-smoke source cache manifest changed")
+    elif source == "in_process_monotonic":
+        if not math.isclose(
+            float(ready.get("generation_seconds", math.nan)),
+            generation_seconds,
+            abs_tol=1e-6,
+            rel_tol=0,
+        ):
+            raise RuntimeError("timing-smoke in-process cache duration changed")
+    else:
+        raise RuntimeError("timing-smoke cache timing source is invalid")
+    return report
+
+
 def run_worker(
     *,
     config: Mapping[str, Any],
     output_root: Path,
     checkpoint_dir: Path,
     model_cache: Path,
+    worker_index: int,
     cache_role: str,
     method: str,
     probe_seeds: Sequence[int],
-    include_companion: bool,
+    companion_seeds: Sequence[int],
     device: str,
     dependency_preflight: Mapping[str, Any],
     cache_wait_seconds: float = 21600,
@@ -1099,8 +1857,11 @@ def run_worker(
     """Run several seeds after one expensive sae-probes eager import."""
 
     seeds = [int(seed) for seed in probe_seeds]
+    companions = [int(seed) for seed in companion_seeds]
     if not seeds or len(seeds) != len(set(seeds)):
         raise ValueError("worker probe seeds must be nonempty and unique")
+    if len(companions) != len(set(companions)):
+        raise ValueError("worker companion seeds must be unique")
     frozen_seeds = set(config["benchmark"]["probe_seeds"])
     if not set(seeds).issubset(frozen_seeds):
         raise ValueError("worker probe seeds must be a subset of the frozen seed list")
@@ -1108,8 +1869,17 @@ def run_worker(
         raise ValueError("cache role must be prepare or wait")
     if method not in {"mse", "dpsae"}:
         raise ValueError("worker method must be mse or dpsae")
-    if include_companion and method != "mse":
-        raise ValueError("companion jobs are assigned once, to the MSE workers")
+    runtime = config["runtime"]
+    if worker_index not in range(int(runtime["worker_count"])):
+        raise ValueError("worker index is outside the frozen four-worker fleet")
+    frozen_sparse = runtime["sparse_worker_shards"][worker_index]
+    frozen_companions = [int(seed) for seed in runtime["companion_seed_shards"][worker_index]]
+    if method != frozen_sparse["method"] or seeds != [
+        int(seed) for seed in frozen_sparse["probe_seeds"]
+    ]:
+        raise ValueError("worker sparse assignment differs from the frozen runtime shard")
+    if companions != frozen_companions:
+        raise ValueError("worker companion assignment differs from the frozen 3/3/2/2 shard")
 
     started = time.monotonic()
     if cache_role == "prepare":
@@ -1126,6 +1896,12 @@ def run_worker(
             model_cache=model_cache,
             timeout_seconds=cache_wait_seconds,
         )
+    timing_smoke = verify_timing_smoke_gate(config, output_root)
+    torch_device = torch.device(device)
+    adapters = {
+        adapter_method: load_adapter(config, checkpoint_dir, adapter_method, torch_device)
+        for adapter_method in ("mse", "dpsae")
+    }
 
     sparse_results = []
     companion_results = []
@@ -1139,36 +1915,41 @@ def run_worker(
                 method=method,
                 probe_seed=seed,
                 device=device,
+                adapter=adapters[method],
             )
         )
-        if include_companion:
-            companion_results.append(
-                run_companion_job(
-                    config=config,
-                    output_root=output_root,
-                    checkpoint_dir=checkpoint_dir,
-                    model_cache=model_cache,
-                    probe_seed=seed,
-                    device=device,
-                )
+    for seed in companions:
+        companion_results.append(
+            run_companion_job(
+                config=config,
+                output_root=output_root,
+                checkpoint_dir=checkpoint_dir,
+                model_cache=model_cache,
+                probe_seed=seed,
+                device=device,
+                adapters=adapters,
             )
+        )
 
     result = {
         "schema_version": 1,
         "complete": True,
         "config_digest": canonical_digest(config),
+        "worker_index": worker_index,
         "cache_role": cache_role,
         "cache_manifest_sha256": canonical_digest(cache),
+        "timing_smoke_sha256": file_sha256(output_root / "timing_smoke.json"),
+        "timing_projected_pod_hours": timing_smoke["projection"]["projected_pod_hours"],
         "method": method,
         "probe_seeds": seeds,
-        "include_companion": include_companion,
+        "companion_seeds": companions,
         "device": device,
         "dependency_preflight": dict(dependency_preflight),
         "worker_seconds_excluding_dependency_preflight": time.monotonic() - started,
         "sparse_job_count": len(sparse_results),
         "companion_job_count": len(companion_results),
     }
-    worker_name = f"{method}_{seeds[0]}_{seeds[-1]}"
+    worker_name = f"worker_{worker_index}_{method}_{seeds[0]}_{seeds[-1]}"
     atomic_json(output_root / "workers" / f"{worker_name}.json", result)
     return result
 
@@ -1223,11 +2004,9 @@ def _load_sparse_records(
                     )
                 record = read_json(provenance_path)
                 predictions_path = job / "predictions" / f"{dataset}.pt"
-                if (
-                    not predictions_path.is_file()
-                    or record.get("heldout_predictions_sha256")
-                    != file_sha256(predictions_path)
-                ):
+                if not predictions_path.is_file() or record.get(
+                    "heldout_predictions_sha256"
+                ) != file_sha256(predictions_path):
                     raise RuntimeError(
                         f"sparse predictions changed for {method}, {dataset}, seed {seed}"
                     )
@@ -1251,13 +2030,10 @@ def _load_companion_records(
                 raise RuntimeError(f"companion result changed for {dataset}, seed {seed}")
             record = read_json(path)
             weights_path = job / "weights" / f"{dataset}.pt"
-            if (
-                not weights_path.is_file()
-                or record.get("weights_sha256") != file_sha256(weights_path)
+            if not weights_path.is_file() or record.get("weights_sha256") != file_sha256(
+                weights_path
             ):
-                raise RuntimeError(
-                    f"companion weights changed for {dataset}, seed {seed}"
-                )
+                raise RuntimeError(f"companion weights changed for {dataset}, seed {seed}")
             records[(seed, dataset)] = record
     return records
 
@@ -1363,18 +2139,13 @@ def aggregate_pilot(
             }
         for seed in seeds:
             dpsae_row = next(
-                item
-                for item in sparse[("dpsae", seed, dataset)]["rows"]
-                if item["k"] == primary_k
+                item for item in sparse[("dpsae", seed, dataset)]["rows"] if item["k"] == primary_k
             )
             mse_row = next(
-                item
-                for item in sparse[("mse", seed, dataset)]["rows"]
-                if item["k"] == primary_k
+                item for item in sparse[("mse", seed, dataset)]["rows"] if item["k"] == primary_k
             )
             seed_deltas[seed].append(
-                float(dpsae_row["metrics"]["test_auc"])
-                - float(mse_row["metrics"]["test_auc"])
+                float(dpsae_row["metrics"]["test_auc"]) - float(mse_row["metrics"]["test_auc"])
             )
 
     task_deltas = {
@@ -1394,15 +2165,12 @@ def aggregate_pilot(
             for representation in ("reconstruction", "full_code"):
                 methods[method][representation] = {
                     metric: float(
-                        np.mean(
-                            [row["methods"][method][representation][metric] for row in rows]
-                        )
+                        np.mean([row["methods"][method][representation][metric] for row in rows])
                     )
                     for metric in ("test_auc", "test_acc", "test_f1")
                 }
         full_code_delta = (
-            methods["dpsae"]["full_code"]["test_auc"]
-            - methods["mse"]["full_code"]["test_auc"]
+            methods["dpsae"]["full_code"]["test_auc"] - methods["mse"]["full_code"]["test_auc"]
         )
         reconstruction_delta = (
             methods["dpsae"]["reconstruction"]["test_auc"]
@@ -1441,8 +2209,7 @@ def aggregate_pilot(
         "lower_confidence_bound": interval["lower"] > 0,
         "probe_reseed_stability": interval["estimate"]
         > float(stats["minimum_effect_to_probe_reseed_se_ratio"]) * reseed_se,
-        "multiple_positive_families": positive_families
-        >= int(stats["minimum_positive_families"]),
+        "multiple_positive_families": positive_families >= int(stats["minimum_positive_families"]),
     }
     advance = all(checks.values())
     candidates = _candidate_records(config, sparse)
@@ -1485,7 +2252,10 @@ def aggregate_pilot(
         "companion_macro": {
             "paired_full_code_auc_delta": float(
                 np.mean(
-                    [value["paired_full_code_auc_delta"] for value in companion_task_metrics.values()]
+                    [
+                        value["paired_full_code_auc_delta"]
+                        for value in companion_task_metrics.values()
+                    ]
                 )
             ),
             "paired_reconstruction_auc_delta": float(
@@ -1497,7 +2267,9 @@ def aggregate_pilot(
                 )
             ),
             "excess_sparse_gain_auc": float(
-                np.mean([value["excess_sparse_gain_auc"] for value in companion_task_metrics.values()])
+                np.mean(
+                    [value["excess_sparse_gain_auc"] for value in companion_task_metrics.values()]
+                )
             ),
         },
         "candidate_manifest_sha256": file_sha256(output_root / "candidate_manifest.json"),
@@ -1523,8 +2295,17 @@ def main() -> None:
 
     subparsers.add_parser("freeze")
 
+    cold_cache_parser = subparsers.add_parser("record-cold-cache-timing")
+    cold_cache_parser.add_argument("--source-cache-ready", type=_path, required=True)
+    cold_cache_parser.add_argument("--model-cache", type=_path, required=True)
+    cold_cache_parser.add_argument("--start-unix-seconds", type=int, required=True)
+    cold_cache_parser.add_argument("--end-unix-seconds", type=int, required=True)
+    cold_cache_parser.add_argument("--expected-generation-seconds", type=int, required=True)
+    cold_cache_parser.add_argument("--output", type=_path)
+
     cache_parser = subparsers.add_parser("prepare-cache")
     cache_parser.add_argument("--model-cache", type=_path, required=True)
+    cache_parser.add_argument("--cold-cache-provenance", type=_path)
     cache_parser.add_argument("--device", default="cuda:0")
 
     wait_parser = subparsers.add_parser("wait-cache")
@@ -1542,12 +2323,23 @@ def main() -> None:
     companion_parser.add_argument("--probe-seed", type=int, required=True)
     companion_parser.add_argument("--device", default="cuda:0")
 
+    timing_parser = subparsers.add_parser("timing-smoke")
+    timing_parser.add_argument("--model-cache", type=_path, required=True)
+    timing_parser.add_argument("--cold-cache-provenance", type=_path)
+    timing_parser.add_argument("--device", default="cuda:0")
+    timing_preflight_parser = subparsers.add_parser("timing-preflight")
+    timing_preflight_parser.add_argument("--model-cache", type=_path, required=True)
+    timing_preflight_parser.add_argument("--cold-cache-provenance", type=_path)
+    timing_preflight_parser.add_argument("--device", default="cuda:0")
+    subparsers.add_parser("timing-gate")
+
     worker_parser = subparsers.add_parser("run-worker")
     worker_parser.add_argument("--model-cache", type=_path, required=True)
+    worker_parser.add_argument("--worker-index", type=int, required=True)
     worker_parser.add_argument("--cache-role", choices=("prepare", "wait"), required=True)
     worker_parser.add_argument("--method", choices=("mse", "dpsae"), required=True)
     worker_parser.add_argument("--probe-seeds", type=int, nargs="+", required=True)
-    worker_parser.add_argument("--include-companion", action="store_true")
+    worker_parser.add_argument("--companion-seeds", type=int, nargs="*", default=[])
     worker_parser.add_argument("--cache-wait-seconds", type=float, default=21600)
     worker_parser.add_argument("--device", default="cuda:0")
 
@@ -1559,7 +2351,28 @@ def main() -> None:
     checkpoint_dir = resolve_checkpoint_dir(config, args.checkpoint_dir)
     args.output_root = args.output_root.resolve()
 
-    if args.command == "eligibility":
+    if args.command == "record-cold-cache-timing":
+        output_path = (
+            args.output.resolve()
+            if args.output is not None
+            else args.output_root / "cold_cache_timing_provenance.json"
+        )
+        print(
+            json.dumps(
+                record_cold_cache_timing_provenance(
+                    config=config,
+                    source_cache_ready=args.source_cache_ready.resolve(),
+                    model_cache=args.model_cache.resolve(),
+                    start_unix_seconds=args.start_unix_seconds,
+                    end_unix_seconds=args.end_unix_seconds,
+                    expected_generation_seconds=args.expected_generation_seconds,
+                    output_path=output_path,
+                ),
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    elif args.command == "eligibility":
         report = assess_eligibility(config, checkpoint_dir, device=torch.device(args.device))
         atomic_json(args.output_root / "eligibility.json", report)
         print(json.dumps(report, indent=2, sort_keys=True))
@@ -1591,6 +2404,7 @@ def main() -> None:
                     output_root=args.output_root,
                     model_cache=args.model_cache.resolve(),
                     device=args.device,
+                    cold_cache_provenance=args.cold_cache_provenance,
                 ),
                 indent=2,
                 sort_keys=True,
@@ -1646,6 +2460,56 @@ def main() -> None:
                 sort_keys=True,
             )
         )
+    elif args.command == "timing-smoke":
+        if args.saebench_root is None:
+            parser.error("timing-smoke requires --saebench-root")
+        verify_saebench_environment(config, args.saebench_root)
+        report = run_timing_smoke(
+            config=config,
+            output_root=args.output_root,
+            checkpoint_dir=checkpoint_dir,
+            model_cache=args.model_cache.resolve(),
+            device=args.device,
+            cold_cache_provenance=args.cold_cache_provenance,
+        )
+        print(json.dumps(report, indent=2, sort_keys=True))
+        if not report["passed"]:
+            raise SystemExit(2)
+    elif args.command == "timing-preflight":
+        if args.saebench_root is None:
+            parser.error("timing-preflight requires --saebench-root")
+        freeze_run(
+            config_path=args.config,
+            output_root=args.output_root,
+            checkpoint_dir=checkpoint_dir,
+            saebench_root=args.saebench_root,
+        )
+        prepare_cache(
+            config=config,
+            output_root=args.output_root,
+            model_cache=args.model_cache.resolve(),
+            device=args.device,
+            cold_cache_provenance=args.cold_cache_provenance,
+        )
+        report = run_timing_smoke(
+            config=config,
+            output_root=args.output_root,
+            checkpoint_dir=checkpoint_dir,
+            model_cache=args.model_cache.resolve(),
+            device=args.device,
+            cold_cache_provenance=args.cold_cache_provenance,
+        )
+        print(json.dumps(report, indent=2, sort_keys=True))
+        if not report["passed"]:
+            raise SystemExit(2)
+    elif args.command == "timing-gate":
+        print(
+            json.dumps(
+                verify_timing_smoke_gate(config, args.output_root),
+                indent=2,
+                sort_keys=True,
+            )
+        )
     elif args.command == "run-worker":
         if args.saebench_root is None:
             parser.error("run-worker requires --saebench-root")
@@ -1662,10 +2526,11 @@ def main() -> None:
                     output_root=args.output_root,
                     checkpoint_dir=checkpoint_dir,
                     model_cache=args.model_cache.resolve(),
+                    worker_index=args.worker_index,
                     cache_role=args.cache_role,
                     method=args.method,
                     probe_seeds=args.probe_seeds,
-                    include_companion=args.include_companion,
+                    companion_seeds=args.companion_seeds,
                     device=args.device,
                     dependency_preflight=environment,
                     cache_wait_seconds=args.cache_wait_seconds,

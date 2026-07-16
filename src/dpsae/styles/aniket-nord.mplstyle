@@ -12,7 +12,7 @@ savefig.bbox: standard
 savefig.pad_inches: 0.02
 
 font.family: sans-serif
-font.sans-serif: DejaVu Sans
+font.sans-serif: D-DIN, DejaVu Sans
 font.size: 7.25
 mathtext.fontset: dejavusans
 
@@ -26,6 +26,7 @@ axes.labelsize: 7.25
 axes.linewidth: 0.75
 axes.axisbelow: True
 axes.grid: True
+axes.unicode_minus: False
 axes.spines.top: False
 axes.spines.right: False
 axes.prop_cycle: cycler('color', ['5E81AC', 'D08770', 'B48EAD', 'A3BE8C', 'BF616A', '8FBCBB', 'EBCB8B'])
