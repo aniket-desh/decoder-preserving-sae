@@ -20,7 +20,7 @@ if [[ "$STAGE" == "--worker" ]]; then
   STAGE="${2:-all}"
   mkdir -p "$LOG_DIR"
   cd "$ROOT"
-  export PYTHONPATH=src
+  export PYTHONPATH=.:src
   export HF_HOME="${HF_HOME:-/workspace/huggingface}"
   export TOKENIZERS_PARALLELISM=true
   export CUDA_VISIBLE_DEVICES="${EXP11_CUDA_VISIBLE_DEVICES:-3}"
