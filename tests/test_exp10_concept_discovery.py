@@ -180,6 +180,8 @@ def test_full_code_csr_preserves_values_and_lbfgs_outputs():
     train_csr = runner._full_code_csr(train_dense)
     test_csr = runner._full_code_csr(test_dense)
 
+    assert len(train_csr) == len(train_dense)
+    assert len(test_csr) == len(test_dense)
     np.testing.assert_array_equal(train_csr.toarray(), train_dense.numpy())
     np.testing.assert_array_equal(test_csr.toarray(), test_dense.numpy())
     assert train_csr.nnz == int(torch.count_nonzero(train_dense))

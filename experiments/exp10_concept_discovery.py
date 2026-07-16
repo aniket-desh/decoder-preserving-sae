@@ -1033,6 +1033,12 @@ def _full_code_csr(code: Tensor) -> Any:
 
     from scipy.sparse import csr_matrix
 
+    class _RowCountCSR(csr_matrix):
+        """CSR compatibility shim for sae-probes' ``len(X_train)`` call."""
+
+        def __len__(self) -> int:
+            return int(self.shape[0])
+
     if code.ndim != 2 or code.layout != torch.strided:
         raise ValueError("full-code CSR conversion requires a dense rank-two tensor")
     if code.device.type != "cpu":
@@ -1040,7 +1046,7 @@ def _full_code_csr(code: Tensor) -> Any:
     if not torch.isfinite(code).all():
         raise ValueError("full-code CSR conversion requires finite values")
     dense = code.detach().contiguous().numpy()
-    sparse = csr_matrix(dense, copy=True)
+    sparse = _RowCountCSR(dense, copy=True)
     sparse.sum_duplicates()
     sparse.sort_indices()
     if sparse.nnz != int(torch.count_nonzero(code)):
