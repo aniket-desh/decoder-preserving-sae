@@ -59,6 +59,8 @@ def test_config_freezes_grid_match_and_advancement_before_results():
 def test_runpod_launcher_keeps_repository_root_importable():
     launcher = (ROOT / "scripts" / "run_exp11_static_matched_nmse_runpod.sh").read_text()
     assert "export PYTHONPATH=.:src" in launcher
+    assert "EXP11_PYTHON='$PYTHON_BIN'" in launcher
+    assert "EXP11_CUDA_VISIBLE_DEVICES='$GPU_ID'" in launcher
 
 
 def test_screen_specs_are_paired_and_spectral_only():

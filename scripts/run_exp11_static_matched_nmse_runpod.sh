@@ -12,6 +12,8 @@ SESSION="${EXP11_SESSION:-$DEFAULT_SESSION}"
 REFERENCE_ROOT="${EXP11_REFERENCE_ARTIFACT_ROOT:-/workspace/dpsae-restored/paper_closure/confirmation_common}"
 LOG_DIR="$ROOT/artifacts/exp11_static_matched_nmse/logs"
 PYTHON_BIN="${EXP11_PYTHON:-$ROOT/.venv/bin/python}"
+GPU_ID="${EXP11_CUDA_VISIBLE_DEVICES:-3}"
+HF_ROOT="${HF_HOME:-/workspace/huggingface}"
 if [[ ! -x "$PYTHON_BIN" ]]; then
   PYTHON_BIN="python3"
 fi
@@ -21,9 +23,9 @@ if [[ "$STAGE" == "--worker" ]]; then
   mkdir -p "$LOG_DIR"
   cd "$ROOT"
   export PYTHONPATH=.:src
-  export HF_HOME="${HF_HOME:-/workspace/huggingface}"
+  export HF_HOME="$HF_ROOT"
   export TOKENIZERS_PARALLELISM=true
-  export CUDA_VISIBLE_DEVICES="${EXP11_CUDA_VISIBLE_DEVICES:-3}"
+  export CUDA_VISIBLE_DEVICES="$GPU_ID"
   "$PYTHON_BIN" -u experiments/exp11_static_matched_nmse.py \
     "$STAGE" \
     --reference-artifact-root "$REFERENCE_ROOT" \
@@ -41,6 +43,6 @@ fi
 
 mkdir -p "$LOG_DIR"
 tmux new-session -d -s "$SESSION" \
-  "EXP11_REFERENCE_ARTIFACT_ROOT='$REFERENCE_ROOT' '$0' --worker '$STAGE'"
+  "EXP11_REFERENCE_ARTIFACT_ROOT='$REFERENCE_ROOT' EXP11_PYTHON='$PYTHON_BIN' EXP11_CUDA_VISIBLE_DEVICES='$GPU_ID' HF_HOME='$HF_ROOT' '$0' --worker '$STAGE'"
 echo "started tmux session $SESSION"
 echo "log: $LOG_DIR/${STAGE}.log"

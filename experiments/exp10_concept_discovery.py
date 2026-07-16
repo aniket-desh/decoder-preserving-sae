@@ -440,6 +440,26 @@ def source_hashes(config_path: Path) -> dict[str, str]:
     return {str(path.relative_to(ROOT)): file_sha256(path) for path in resolved}
 
 
+def repository_state() -> dict[str, Any]:
+    revision = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+    ).strip()
+    status = subprocess.check_output(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=ROOT,
+        text=True,
+    ).splitlines()
+    if status:
+        raise RuntimeError("exp10 requires a clean repository revision")
+    return {"revision": revision, "dirty": False, "status": status}
+
+
+def stable_resolved_contract(value: Mapping[str, Any]) -> dict[str, Any]:
+    stable = json.loads(json.dumps(value))
+    stable.get("environment", {}).pop("sae_probes_eager_import_seconds", None)
+    return stable
+
+
 def freeze_run(
     *,
     config_path: Path,
@@ -461,12 +481,16 @@ def freeze_run(
         "config_digest": canonical_digest(config),
         "checkpoint_directory": str(checkpoint_dir),
         "artifact_hashes": eligibility["artifact_hashes"],
+        "repository": repository_state(),
         "environment": environment,
         "source_hashes": source_hashes(config_path),
     }
     path = output_root / "resolved_config.json"
-    if path.exists() and read_json(path) != resolved:
-        raise RuntimeError("resolved exp10 run changed; use a fresh output root")
+    if path.exists():
+        existing = read_json(path)
+        if stable_resolved_contract(existing) != stable_resolved_contract(resolved):
+            raise RuntimeError("resolved exp10 run changed; use a fresh output root")
+        return existing
     atomic_json(path, resolved)
     return resolved
 
@@ -1191,7 +1215,22 @@ def _load_sparse_records(
             if not done.get("complete") or done.get("config_digest") != canonical_digest(config):
                 raise RuntimeError(f"incomplete sparse job: {job}")
             for dataset in config["benchmark"]["datasets"]:
-                record = read_json(job / "provenance" / f"{dataset}.json")
+                provenance_path = job / "provenance" / f"{dataset}.json"
+                expected_hash = done.get("provenance_hashes", {}).get(dataset)
+                if expected_hash != file_sha256(provenance_path):
+                    raise RuntimeError(
+                        f"sparse provenance changed for {method}, {dataset}, seed {seed}"
+                    )
+                record = read_json(provenance_path)
+                predictions_path = job / "predictions" / f"{dataset}.pt"
+                if (
+                    not predictions_path.is_file()
+                    or record.get("heldout_predictions_sha256")
+                    != file_sha256(predictions_path)
+                ):
+                    raise RuntimeError(
+                        f"sparse predictions changed for {method}, {dataset}, seed {seed}"
+                    )
                 records[(method, seed, dataset)] = record
     return records
 
@@ -1210,7 +1249,16 @@ def _load_companion_records(
             path = job / "metrics" / f"{dataset}.json"
             if done["dataset_hashes"].get(dataset) != file_sha256(path):
                 raise RuntimeError(f"companion result changed for {dataset}, seed {seed}")
-            records[(seed, dataset)] = read_json(path)
+            record = read_json(path)
+            weights_path = job / "weights" / f"{dataset}.pt"
+            if (
+                not weights_path.is_file()
+                or record.get("weights_sha256") != file_sha256(weights_path)
+            ):
+                raise RuntimeError(
+                    f"companion weights changed for {dataset}, seed {seed}"
+                )
+            records[(seed, dataset)] = record
     return records
 
 

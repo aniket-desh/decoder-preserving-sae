@@ -20,6 +20,22 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 mkdir -p "$LOG_ROOT" "$MODEL_CACHE"
 
+REPOSITORY_REVISION="$(git rev-parse HEAD)"
+REPOSITORY_STATUS="$(git status --porcelain=v1 --untracked-files=all)"
+if [[ -n "$REPOSITORY_STATUS" ]]; then
+  echo "exp10 requires a clean repository revision" >&2
+  exit 2
+fi
+printf '%s\n' "$REPOSITORY_REVISION" > "$OUTPUT_ROOT/repository-revision.txt"
+"$PYTHON" -m pip freeze > "$OUTPUT_ROOT/environment-pip-freeze.txt"
+nvidia-smi -q > "$OUTPUT_ROOT/nvidia-smi.txt"
+sha256sum \
+  "$CONFIG" \
+  "$ROOT/experiments/exp10_concept_discovery.py" \
+  "$ROOT/src/dpsae/saebench_adapter.py" \
+  "$ROOT/scripts/run_exp10_concept_4xa40.sh" \
+  > "$OUTPUT_ROOT/deployed-source-sha256.txt"
+
 if [[ ! -x "$PYTHON" ]]; then
   echo "sealed exp10 Python is missing or not executable: $PYTHON" >&2
   exit 2

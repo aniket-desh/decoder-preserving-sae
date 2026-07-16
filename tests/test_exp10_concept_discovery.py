@@ -53,6 +53,37 @@ def test_source_hashes_accepts_repository_relative_config_path():
     assert "src/dpsae/saebench_adapter.py" in hashes
 
 
+def test_repository_state_requires_clean_revision(monkeypatch):
+    responses = iter(["abc123\n", ""])
+    monkeypatch.setattr(runner.subprocess, "check_output", lambda *_a, **_k: next(responses))
+
+    assert runner.repository_state() == {
+        "revision": "abc123",
+        "dirty": False,
+        "status": [],
+    }
+
+
+def test_resolved_contract_ignores_only_measured_import_time():
+    first = {
+        "environment": {"sae_probes_eager_import_seconds": 61.0, "versions": {"x": "1"}},
+        "source_hashes": {"runner": "abc"},
+    }
+    second = copy.deepcopy(first)
+    second["environment"]["sae_probes_eager_import_seconds"] = 92.0
+
+    assert runner.stable_resolved_contract(first) == runner.stable_resolved_contract(second)
+    second["source_hashes"]["runner"] = "changed"
+    assert runner.stable_resolved_contract(first) != runner.stable_resolved_contract(second)
+
+
+def test_launcher_records_environment_and_deployed_sources():
+    launcher = (runner.ROOT / "scripts/run_exp10_concept_4xa40.sh").read_text()
+    assert "git status --porcelain=v1 --untracked-files=all" in launcher
+    assert "environment-pip-freeze.txt" in launcher
+    assert "deployed-source-sha256.txt" in launcher
+
+
 def test_one_based_block_8_maps_to_transformerlens_block_7():
     assert one_based_resid_post_hook(8) == (7, "blocks.7.hook_resid_post")
     with pytest.raises(ValueError, match="positive"):
