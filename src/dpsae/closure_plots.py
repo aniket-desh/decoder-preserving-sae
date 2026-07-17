@@ -191,6 +191,9 @@ def plot_concept_ladder(
     expected = {(method, stage) for method in METHOD_STYLE for stage in STAGES}
     if set(keyed) != expected:
         raise ValueError("concept ladder does not contain the complete method-stage grid")
+    residual = keyed[("mse", "residual")]
+    if not np.allclose(residual, keyed[("dpsae", "residual")], rtol=0, atol=1e-12):
+        raise ValueError("concept ladder residual baseline must be shared across methods")
 
     with paper_context():
         fig, ax = plt.subplots(figsize=figure_size("full", aspect=0.44))
@@ -201,10 +204,17 @@ def plot_concept_ladder(
             errors = np.asarray(
                 [[value[0] - value[1] for value in values], [value[2] - value[0] for value in values]]
             )
+            ax.plot(
+                x[:2],
+                estimates[:2],
+                color=style["color"],
+                linestyle=style["linestyle"],
+                linewidth=1.45,
+            )
             ax.errorbar(
-                x,
-                estimates,
-                yerr=errors,
+                x[1:],
+                estimates[1:],
+                yerr=errors[:, 1:],
                 color=style["color"],
                 marker=style["marker"],
                 linestyle=style["linestyle"],
@@ -213,6 +223,18 @@ def plot_concept_ladder(
                 capsize=2,
                 label=style["label"],
             )
+        ax.errorbar(
+            [x[0]],
+            [residual[0]],
+            yerr=[[residual[0] - residual[1]], [residual[2] - residual[0]]],
+            color=NEUTRAL["text"],
+            marker="D",
+            linestyle="none",
+            capsize=2,
+            markersize=4.0,
+            label="Shared residual",
+            zorder=3,
+        )
         ax.set_xticks(x, [STAGE_LABELS[stage] for stage in STAGES])
         ax.set_ylabel("Held-out AUROC")
         clean_axis(ax)

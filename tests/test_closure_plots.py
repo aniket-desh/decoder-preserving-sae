@@ -11,7 +11,7 @@ def _concept_block():
     records = []
     for method, offset in (("mse", 0.0), ("dpsae", 0.02)):
         for index, stage in enumerate(plots.STAGES):
-            estimate = 0.8 - 0.03 * index + offset
+            estimate = 0.8 - 0.03 * index + (0.0 if stage == "residual" else offset)
             records.append(
                 {
                     "method": method,
@@ -43,6 +43,17 @@ def test_plot_blocks_fail_closed_on_incomplete_or_unavailable_results(tmp_path):
         plots.plot_frozen_network_noninferiority(
             {"available": False}, tmp_path / "frozen"
         )
+
+
+def test_concept_ladder_requires_one_shared_residual_baseline(tmp_path):
+    block = _concept_block()
+    next(
+        row
+        for row in block["records"]
+        if row["method"] == "dpsae" and row["stage"] == "residual"
+    )["estimate"] += 0.01
+    with pytest.raises(ValueError, match="residual baseline must be shared"):
+        plots.plot_concept_ladder(block, tmp_path / "concept")
 
 
 def test_noninferiority_and_static_control_scaffolds_render(tmp_path):
