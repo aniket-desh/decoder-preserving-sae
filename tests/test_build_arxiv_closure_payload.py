@@ -78,6 +78,8 @@ def _fixture(tmp_path: Path):
             "inputs": {"natural_results": _absolute_record(natural)},
         },
     )
+    _write(exp09 / "smoke/natural_results.json", {"complete": False})
+    _write(exp09 / "smoke/completion_manifest.json", {"complete": False})
 
     attempt = run / "exp10_concept_discovery" / "final-attempt"
     report = attempt / "advancement_report.json"

@@ -120,6 +120,19 @@ class AuditedFiles:
             raise ValueError(f"expected one audited {group_id}/{name}, found {len(paths)}")
         return self.verify(paths[0])
 
+    def relative(self, group_id: str, relative: str) -> Path:
+        group = self.groups[group_id]
+        if not group.get("present"):
+            raise ValueError(f"audited release does not contain group {group_id}")
+        anchor = Path(self.release["anchors"][group["anchor"]]).resolve()
+        root = (anchor / group["tree"]["anchor_relative_root"]).resolve()
+        path = (root / relative).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError as error:
+            raise ValueError(f"relative result escapes audited group {group_id}") from error
+        return self.verify(path)
+
     def verify(self, path: Path) -> Path:
         path = path.resolve()
         row = self.paths.get(path)
@@ -161,11 +174,13 @@ def _follow_record(
 
 
 def _exp09(files: AuditedFiles) -> tuple[dict, dict, list[dict]]:
-    completion_path = files.unique("exp09_frozen_network", "completion_manifest.json")
+    completion_path = files.relative(
+        "exp09_frozen_network", "completion_manifest.json"
+    )
     completion = _json(completion_path)
     if completion.get("complete") is not True or completion.get("confirmatory") is not True:
         raise ValueError("Exp09 completion manifest is not confirmatory and complete")
-    natural_path = files.unique("exp09_frozen_network", "natural_results.json")
+    natural_path = files.relative("exp09_frozen_network", "natural_results.json")
     natural_path, source = _follow_record(
         files, completion["inputs"]["natural_results"], natural_path, "exp09_natural_results"
     )
@@ -374,7 +389,7 @@ def _exp10(files: AuditedFiles) -> tuple[dict, dict, list[dict]]:
 
 
 def _exp11(files: AuditedFiles) -> tuple[dict, dict, list[dict]]:
-    path = files.unique("exp11_static_matched_nmse", "summary.json")
+    path = files.relative("exp11_static_matched_nmse", "summary.json")
     value = _json(path)
     screen, confirmation = value.get("screen", {}), value.get("confirmation", {})
     if (
