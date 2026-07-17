@@ -88,7 +88,7 @@ def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
                 {"method": "dpsae", "probe_seeds": seeds},
             ],
             "companion_seed_shards": [seeds, []],
-            "companion_full_code_cold_C_jobs_per_worker": 6,
+            "companion_full_code_cold_C_jobs_per_worker": 10,
             "timing_smoke": {
                 "probe_seed": 99,
                 "task_count": 1,
@@ -138,7 +138,7 @@ def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
     _json(
         output / "timing_smoke.json",
         {
-            "schema_version": 4,
+            "schema_version": 5,
             "complete": True,
             "passed": True,
             "config_digest": digest,
@@ -149,7 +149,7 @@ def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
             "companion_l2_path_optimization": (
                 "parallel_independent_cold_C_loky_cold_selected_C_refit"
             ),
-            "companion_full_code_cold_C_jobs_per_worker": 6,
+            "companion_full_code_cold_C_jobs_per_worker": 10,
         },
     )
     split = AUDIT._expected_split(config, "task_a", 11, 4)
@@ -293,7 +293,7 @@ def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
             "l2_path_optimization": (
                 "parallel_independent_cold_C_loky_cold_selected_C_refit"
             ),
-            "full_code_cold_C_jobs": 6,
+            "full_code_cold_C_jobs": 10,
             "heldout_split_id": split["split_id"],
             "heldout_example_count": 4,
             "heldout_example_id_policy": split["example_id_policy"],

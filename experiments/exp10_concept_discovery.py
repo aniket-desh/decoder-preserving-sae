@@ -149,8 +149,8 @@ def load_config(path: Path = DEFAULT_CONFIG) -> dict[str, Any]:
         raise ValueError("exp10 requires exactly four frozen sparse worker shards")
     if len(runtime["companion_seed_shards"]) != worker_count:
         raise ValueError("exp10 requires exactly four frozen companion seed shards")
-    if int(runtime.get("companion_full_code_cold_C_jobs_per_worker", 0)) != 6:
-        raise ValueError("exp10 requires six independent cold-C jobs per full-code worker")
+    if int(runtime.get("companion_full_code_cold_C_jobs_per_worker", 0)) != 10:
+        raise ValueError("exp10 requires ten independent cold-C jobs per full-code worker")
     sparse_pairs = [
         (shard["method"], int(seed))
         for shard in runtime["sparse_worker_shards"]
@@ -1774,7 +1774,7 @@ def _assemble_timing_smoke_report(
     )
     passed = projection["projected_pod_hours"] <= float(smoke["maximum_projected_pod_hours"])
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "complete": True,
         "passed": passed,
         "config_digest": resolved["config_digest"],
@@ -2004,7 +2004,7 @@ def verify_timing_smoke_gate(config: Mapping[str, Any], output_root: Path) -> di
     report = read_json(path)
     smoke = config["runtime"]["timing_smoke"]
     required = {
-        "schema_version": 4,
+        "schema_version": 5,
         "complete": True,
         "passed": True,
         "config_digest": canonical_digest(config),

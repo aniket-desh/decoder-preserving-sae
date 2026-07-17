@@ -149,6 +149,7 @@ EXPECTED_TASK_COUNT="$(jq -er '.runtime.timing_smoke.task_count | select(type ==
 EXPECTED_MAXIMUM_POD_HOURS="$(jq -er '.runtime.timing_smoke.maximum_projected_pod_hours | select(type == "number")' "$CONFIG")"
 EXPECTED_MATRIX_FORMAT="$(jq -er '.benchmark.companion_full_code_matrix_format | select(type == "string")' "$CONFIG")"
 EXPECTED_L2_OPTIMIZATION="$(jq -er '.benchmark.companion_l2_path_optimization | select(type == "string")' "$CONFIG")"
+EXPECTED_COLD_C_JOBS="$(jq -er '.runtime.companion_full_code_cold_C_jobs_per_worker | select(type == "number")' "$CONFIG")"
 
 mapfile -t WORKER_DONE_PATHS < <(
   jq -r --arg output_root "$OUTPUT_ROOT" '
@@ -178,11 +179,12 @@ if ! jq -e \
   --arg config_digest "$EXPECTED_CONFIG_DIGEST" \
   --arg matrix_format "$EXPECTED_MATRIX_FORMAT" \
   --arg l2_optimization "$EXPECTED_L2_OPTIMIZATION" \
+  --argjson cold_c_jobs "$EXPECTED_COLD_C_JOBS" \
   --argjson probe_seed "$EXPECTED_PROBE_SEED" \
   --argjson task_count "$EXPECTED_TASK_COUNT" \
   --argjson maximum_pod_hours "$EXPECTED_MAXIMUM_POD_HOURS" \
   '
-    .schema_version == 4
+    .schema_version == 5
     and .complete == true
     and .config_digest == $config_digest
     and .probe_seed == $probe_seed
@@ -191,10 +193,11 @@ if ! jq -e \
     and .saved_concept_metric_count == 0
     and .companion_full_code_matrix_format == $matrix_format
     and .companion_l2_path_optimization == $l2_optimization
+    and .companion_full_code_cold_C_jobs_per_worker == $cold_c_jobs
     and (.projection.projected_pod_hours | type == "number")
     and (.passed == (.projection.projected_pod_hours <= $maximum_pod_hours))
   ' "$TIMING_REPORT" >/dev/null; then
-  write_status "timing_gate" "error" "blind timing report failed schema-v4/config/runtime identity checks"
+  write_status "timing_gate" "error" "blind timing report failed schema-v5/config/runtime identity checks"
   exit 1
 fi
 if ! jq -e '.passed == true' "$TIMING_REPORT" >/dev/null; then

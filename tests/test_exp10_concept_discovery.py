@@ -86,7 +86,7 @@ def test_frozen_config_hashes_dataset_family_and_regularization_contracts():
         config["benchmark"]["companion_l2_path_optimization"]
         == "parallel_independent_cold_C_loky_cold_selected_C_refit"
     )
-    assert config["runtime"]["companion_full_code_cold_C_jobs_per_worker"] == 6
+    assert config["runtime"]["companion_full_code_cold_C_jobs_per_worker"] == 10
     assert config["benchmark"]["saebench_include_llm_baseline"] is False
     assert "unfiltered logreg baseline" in config["benchmark"]["companion_regularization_rationale"]
     assert set(config["benchmark"]["family_by_dataset"]) == set(config["benchmark"]["datasets"])
@@ -189,7 +189,7 @@ def test_timing_smoke_gate_accepts_only_the_frozen_blind_contract(tmp_path: Path
         )
     )
     report = {
-        "schema_version": 4,
+        "schema_version": 5,
         "complete": True,
         "passed": True,
         "config_digest": runner.canonical_digest(config),
@@ -201,7 +201,7 @@ def test_timing_smoke_gate_accepts_only_the_frozen_blind_contract(tmp_path: Path
         "companion_l2_path_optimization": (
             "parallel_independent_cold_C_loky_cold_selected_C_refit"
         ),
-        "companion_full_code_cold_C_jobs_per_worker": 6,
+        "companion_full_code_cold_C_jobs_per_worker": 10,
         "cache_generation_timing": {
             "source": "in_process_monotonic",
             "generation_seconds": 100.0,
@@ -354,13 +354,13 @@ def test_parallel_cold_C_rejects_path_reuse_counterexample(monkeypatch):
     )
 
 
-def test_timing_gate_rejects_obsolete_path_reuse_schema(tmp_path: Path):
+def test_timing_gate_rejects_obsolete_six_job_schema(tmp_path: Path):
     config = runner.load_config()
     smoke = config["runtime"]["timing_smoke"]
     (tmp_path / "timing_smoke.json").write_text(
         json.dumps(
             {
-                "schema_version": 3,
+                "schema_version": 4,
                 "complete": True,
                 "passed": True,
                 "config_digest": runner.canonical_digest(config),

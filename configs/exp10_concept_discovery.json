@@ -562,7 +562,7 @@
       ]
     ],
     "cache_adapters_once_per_worker": true,
-    "companion_full_code_cold_C_jobs_per_worker": 6,
+    "companion_full_code_cold_C_jobs_per_worker": 10,
     "cold_cache_timing_source_policy": "in_process_monotonic_or_hash_bound_external_provenance",
     "timing_smoke": {
       "probe_seed": 2027071799,

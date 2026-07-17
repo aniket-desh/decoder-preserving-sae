@@ -299,7 +299,7 @@ class ArtifactAuditor:
             timing_path = self.output_root / "timing_smoke.json"
             report = _read_json(timing_path)
             _require(
-                report.get("schema_version") == 4
+                report.get("schema_version") == 5
                 and report.get("complete") is True
                 and report.get("passed") is True,
                 "timing-smoke gate did not pass",
