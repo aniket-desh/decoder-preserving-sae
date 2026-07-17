@@ -1,12 +1,14 @@
 import copy
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from dpsae.exp10_autointerp import (
     file_sha256,
     finalize_batch,
+    poll_and_download_batch,
     prepare_batch,
     read_jsonl,
     validate_label,
@@ -168,6 +170,12 @@ def test_prepare_batch_is_blinded_stable_and_under_cost_cap(tmp_path: Path):
     assert first == second
     assert first["request_count"] == 3
     assert first["cost_preflight"]["conservative_total_usd"] < 10
+    ledger = json.loads((batch_root / "spend_ledger.json").read_text())
+    assert ledger["hard_cap_usd"] == 10
+    assert ledger["totals"]["worst_case_total_usd"] == pytest.approx(
+        first["cost_preflight"]["conservative_total_usd"]
+    )
+    assert ledger["entries"]["primary_labels"]["actual_usd"] is None
     requests = read_jsonl(batch_root / "batch_requests.jsonl")
     assert len({request["custom_id"] for request in requests}) == 3
     serialized = json.dumps(requests)
@@ -204,6 +212,34 @@ def valid_label():
     }
 
 
+def batch_outputs(requests, config, *, label=None):
+    payload = valid_label() if label is None else label
+    return [
+        {
+            "custom_id": request["custom_id"],
+            "error": None,
+            "response": {
+                "status_code": 200,
+                "request_id": f"req_{index}",
+                "body": {
+                    "id": f"resp_{index}",
+                    "model": config["autointerp"]["primary_model"],
+                    "usage": {"input_tokens": 100, "output_tokens": 50},
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {"type": "output_text", "text": json.dumps(payload)}
+                            ],
+                        }
+                    ],
+                },
+            },
+        }
+        for index, request in enumerate(requests)
+    ]
+
+
 def test_finalize_rejects_duplicate_ids_and_validates_schema(tmp_path: Path):
     config, candidate_manifest, candidates, context_root, _ = mine_small_contexts(tmp_path)
     batch_root = tmp_path / "batch"
@@ -216,31 +252,7 @@ def test_finalize_rejects_duplicate_ids_and_validates_schema(tmp_path: Path):
         output_root=batch_root,
     )
     requests = read_jsonl(batch_root / "batch_requests.jsonl")
-    outputs = []
-    for index, request in enumerate(requests):
-        outputs.append(
-            {
-                "custom_id": request["custom_id"],
-                "error": None,
-                "response": {
-                    "status_code": 200,
-                    "request_id": f"req_{index}",
-                    "body": {
-                        "id": f"resp_{index}",
-                        "model": config["autointerp"]["primary_model"],
-                        "usage": {"input_tokens": 100, "output_tokens": 50},
-                        "output": [
-                            {
-                                "type": "message",
-                                "content": [
-                                    {"type": "output_text", "text": json.dumps(valid_label())}
-                                ],
-                            }
-                        ],
-                    },
-                },
-            }
-        )
+    outputs = batch_outputs(requests, config)
     output_path = tmp_path / "batch_output.jsonl"
     write_jsonl(output_path, outputs)
 
@@ -270,3 +282,193 @@ def test_finalize_rejects_duplicate_ids_and_validates_schema(tmp_path: Path):
     invalid["unexpected"] = True
     with pytest.raises(ValueError, match="missing or additional"):
         validate_label(invalid, config["autointerp"]["output_schema"])
+
+
+class FakeBatches:
+    def __init__(self, values):
+        self.values = list(values)
+        self.calls = []
+
+    def retrieve(self, batch_id):
+        self.calls.append(batch_id)
+        if not self.values:
+            raise AssertionError("unexpected Batch retrieval")
+        value = self.values.pop(0)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+
+class FakeFiles:
+    def __init__(self, text):
+        self.text = text
+        self.calls = []
+
+    def content(self, file_id):
+        self.calls.append(file_id)
+        return SimpleNamespace(text=self.text)
+
+
+class FakeClient:
+    def __init__(self, batches, output_text):
+        self.batches = FakeBatches(batches)
+        self.files = FakeFiles(output_text)
+
+
+def submitted_state(batch_root: Path):
+    manifest = batch_root / "batch_manifest.json"
+    requests = batch_root / "batch_requests.jsonl"
+    state = {
+        "schema_version": 1,
+        "submitted": True,
+        "manifest_sha256": file_sha256(manifest),
+        "request_jsonl_sha256": file_sha256(requests),
+        "input_file_id": "file_input",
+        "batch_id": "batch_1",
+        "endpoint": "/v1/responses",
+        "completion_window": "24h",
+        "status": "validating",
+    }
+    path = batch_root / "batch_state.json"
+    write_json(path, state)
+    return path
+
+
+def remote_batch(config, request_count, status):
+    complete = status == "completed"
+    return SimpleNamespace(
+        id="batch_1",
+        input_file_id="file_input",
+        endpoint=config["autointerp"]["endpoint"],
+        completion_window=config["autointerp"]["completion_window"],
+        status=status,
+        output_file_id="file_output" if complete else None,
+        error_file_id=None,
+        request_counts=SimpleNamespace(
+            total=request_count if complete else 0,
+            completed=request_count if complete else 0,
+            failed=0,
+        ),
+    )
+
+
+def prepared_batch(tmp_path: Path):
+    config, candidate_manifest, candidates, context_root, _ = mine_small_contexts(tmp_path)
+    batch_root = tmp_path / "batch"
+    prepare_batch(
+        config=config,
+        candidate_manifest_path=candidate_manifest,
+        candidates_path=candidates,
+        context_manifest_path=context_root / "context_manifest.json",
+        contexts_path=context_root / "candidate_contexts.jsonl",
+        output_root=batch_root,
+    )
+    return config, batch_root, read_jsonl(batch_root / "batch_requests.jsonl")
+
+
+def test_poll_download_validates_updates_ledger_and_resumes_without_api(tmp_path: Path):
+    config, batch_root, requests = prepared_batch(tmp_path)
+    state_path = submitted_state(batch_root)
+    output_text = "".join(
+        json.dumps(value, sort_keys=True) + "\n" for value in batch_outputs(requests, config)
+    )
+    client = FakeClient(
+        [
+            ConnectionError("transient test failure"),
+            remote_batch(config, len(requests), "in_progress"),
+            remote_batch(config, len(requests), "completed"),
+        ],
+        output_text,
+    )
+    output_path = batch_root / "batch_output.jsonl"
+
+    first = poll_and_download_batch(
+        config=config,
+        manifest_path=batch_root / "batch_manifest.json",
+        request_path=batch_root / "batch_requests.jsonl",
+        mapping_path=batch_root / "batch_mapping.jsonl",
+        state_path=state_path,
+        batch_output_path=output_path,
+        poll_seconds=0,
+        timeout_seconds=1,
+        client=client,
+    )
+
+    assert first["downloaded"] is True
+    assert first["validated"] is True
+    assert first["validated_request_count"] == len(requests)
+    assert client.batches.calls == ["batch_1", "batch_1", "batch_1"]
+    assert first["poll_error_count"] == 1
+    assert client.files.calls == ["file_output"]
+    ledger = json.loads((batch_root / "spend_ledger.json").read_text())
+    assert ledger["entries"]["primary_labels"]["actual_usd"] == pytest.approx(
+        len(requests) * 0.00015
+    )
+    assert ledger["totals"]["worst_case_total_usd"] <= ledger["hard_cap_usd"]
+
+    no_api = FakeClient([], "")
+    second = poll_and_download_batch(
+        config=config,
+        manifest_path=batch_root / "batch_manifest.json",
+        request_path=batch_root / "batch_requests.jsonl",
+        mapping_path=batch_root / "batch_mapping.jsonl",
+        state_path=state_path,
+        batch_output_path=output_path,
+        client=no_api,
+    )
+    assert second == first
+    assert no_api.batches.calls == []
+    assert no_api.files.calls == []
+
+
+def test_poll_rejects_invalid_structured_output_before_accepting_download(tmp_path: Path):
+    config, batch_root, requests = prepared_batch(tmp_path)
+    state_path = submitted_state(batch_root)
+    invalid = valid_label()
+    invalid.pop("counterevidence")
+    output_text = "".join(
+        json.dumps(value, sort_keys=True) + "\n"
+        for value in batch_outputs(requests, config, label=invalid)
+    )
+    client = FakeClient(
+        [remote_batch(config, len(requests), "completed")],
+        output_text,
+    )
+    output_path = batch_root / "batch_output.jsonl"
+
+    with pytest.raises(ValueError, match="missing or additional"):
+        poll_and_download_batch(
+            config=config,
+            manifest_path=batch_root / "batch_manifest.json",
+            request_path=batch_root / "batch_requests.jsonl",
+            mapping_path=batch_root / "batch_mapping.jsonl",
+            state_path=state_path,
+            batch_output_path=output_path,
+            client=client,
+        )
+
+    assert not output_path.exists()
+    assert not output_path.with_suffix(".jsonl.download").exists()
+    ledger = json.loads((batch_root / "spend_ledger.json").read_text())
+    assert ledger["entries"]["primary_labels"]["actual_usd"] is None
+
+
+def test_poll_persists_terminal_failure_without_downloading(tmp_path: Path):
+    config, batch_root, requests = prepared_batch(tmp_path)
+    state_path = submitted_state(batch_root)
+    failed = remote_batch(config, len(requests), "failed")
+    client = FakeClient([failed], "must not download")
+
+    with pytest.raises(RuntimeError, match="terminal status failed"):
+        poll_and_download_batch(
+            config=config,
+            manifest_path=batch_root / "batch_manifest.json",
+            request_path=batch_root / "batch_requests.jsonl",
+            mapping_path=batch_root / "batch_mapping.jsonl",
+            state_path=state_path,
+            batch_output_path=batch_root / "batch_output.jsonl",
+            client=client,
+        )
+
+    assert json.loads(state_path.read_text())["status"] == "failed"
+    assert client.files.calls == []

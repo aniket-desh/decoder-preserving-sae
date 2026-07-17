@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -326,6 +327,166 @@ def _planned_cost(
     return result
 
 
+def _spend_entries(manifest: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    preflight = manifest["cost_preflight"]
+    entries: dict[str, dict[str, Any]] = {
+        "primary_labels": {
+            "model": manifest["model"],
+            "planned_maximum_usd": float(preflight["maximum_primary_cost_usd"]),
+            "actual_usd": None,
+        }
+    }
+    for name, value in preflight["followups"].items():
+        entries[name] = {
+            "calls": int(value["calls"]),
+            "planned_maximum_usd": float(value["maximum_cost_usd"]),
+            "actual_usd": None,
+        }
+    return entries
+
+
+def _spend_totals(entries: Mapping[str, Mapping[str, Any]]) -> dict[str, float]:
+    actual = math.fsum(
+        float(entry["actual_usd"])
+        for entry in entries.values()
+        if entry.get("actual_usd") is not None
+    )
+    reserved = math.fsum(
+        float(entry["planned_maximum_usd"])
+        for entry in entries.values()
+        if entry.get("actual_usd") is None
+    )
+    return {
+        "actual_usd": actual,
+        "outstanding_reserved_usd": reserved,
+        "worst_case_total_usd": actual + reserved,
+    }
+
+
+def _validate_spend_ledger(
+    *,
+    ledger: Mapping[str, Any],
+    config: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+    manifest_path: Path,
+) -> None:
+    if ledger.get("schema_version") != 1:
+        raise RuntimeError("autointerp spend ledger schema drift")
+    if not isinstance(ledger.get("complete"), bool):
+        raise RuntimeError("autointerp spend ledger completion field drift")
+    if ledger.get("config_digest") != canonical_digest(config):
+        raise RuntimeError("autointerp spend ledger config drift")
+    if ledger.get("batch_manifest_sha256") != file_sha256(manifest_path):
+        raise RuntimeError("autointerp spend ledger belongs to another Batch manifest")
+    hard_cap = float(config["autointerp"]["hard_planned_cost_usd"])
+    if float(ledger.get("hard_cap_usd", -1)) != hard_cap:
+        raise RuntimeError("autointerp spend ledger hard cap drift")
+    entries = ledger.get("entries")
+    expected = _spend_entries(manifest)
+    if not isinstance(entries, Mapping) or set(entries) != set(expected):
+        raise RuntimeError("autointerp spend ledger entry schema drift")
+    for name, expected_entry in expected.items():
+        entry = entries[name]
+        if not isinstance(entry, Mapping):
+            raise RuntimeError(f"autointerp spend ledger entry {name} is not an object")
+        if set(entry) != set(expected_entry):
+            raise RuntimeError(f"autointerp spend ledger fields drift for {name}")
+        if float(entry.get("planned_maximum_usd", -1)) != float(
+            expected_entry["planned_maximum_usd"]
+        ):
+            raise RuntimeError(f"autointerp spend ledger reservation drift for {name}")
+        for identity in set(expected_entry).difference(
+            {"planned_maximum_usd", "actual_usd"}
+        ):
+            if entry.get(identity) != expected_entry[identity]:
+                raise RuntimeError(f"autointerp spend ledger identity drift for {name}")
+        actual = entry.get("actual_usd")
+        if actual is not None:
+            actual = float(actual)
+            if not math.isfinite(actual) or actual < 0:
+                raise RuntimeError(f"autointerp spend ledger actual is invalid for {name}")
+            if actual > float(expected_entry["planned_maximum_usd"]) + 1e-12:
+                raise RuntimeError(f"autointerp spend exceeded its reservation for {name}")
+    totals = _spend_totals(entries)
+    recorded = ledger.get("totals")
+    if not isinstance(recorded, Mapping) or any(
+        not math.isclose(float(recorded.get(key, -1)), value, rel_tol=0, abs_tol=1e-12)
+        for key, value in totals.items()
+    ):
+        raise RuntimeError("autointerp spend ledger totals drift")
+    if totals["worst_case_total_usd"] > hard_cap + 1e-12:
+        raise RuntimeError("autointerp aggregate spend exceeds the hard experiment cap")
+
+
+def initialize_spend_ledger(
+    *,
+    config: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+    manifest_path: Path,
+    ledger_path: Path,
+) -> dict[str, Any]:
+    entries = _spend_entries(manifest)
+    ledger = {
+        "schema_version": 1,
+        "complete": False,
+        "config_digest": canonical_digest(config),
+        "batch_manifest_sha256": file_sha256(manifest_path),
+        "hard_cap_usd": float(config["autointerp"]["hard_planned_cost_usd"]),
+        "entries": entries,
+        "totals": _spend_totals(entries),
+    }
+    _validate_spend_ledger(
+        ledger=ledger,
+        config=config,
+        manifest=manifest,
+        manifest_path=manifest_path,
+    )
+    if ledger_path.exists():
+        existing = read_json(ledger_path)
+        _validate_spend_ledger(
+            ledger=existing,
+            config=config,
+            manifest=manifest,
+            manifest_path=manifest_path,
+        )
+        if any(entry.get("actual_usd") is not None for entry in existing["entries"].values()):
+            return existing
+    atomic_json(ledger_path, ledger)
+    return ledger
+
+
+def record_primary_batch_spend(
+    *,
+    config: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+    manifest_path: Path,
+    ledger_path: Path,
+    actual_usd: float,
+) -> dict[str, Any]:
+    ledger = read_json(ledger_path)
+    _validate_spend_ledger(
+        ledger=ledger,
+        config=config,
+        manifest=manifest,
+        manifest_path=manifest_path,
+    )
+    prior = ledger["entries"]["primary_labels"].get("actual_usd")
+    if prior is not None and not math.isclose(
+        float(prior), float(actual_usd), rel_tol=0, abs_tol=1e-12
+    ):
+        raise RuntimeError("primary Batch spend changed after it was recorded")
+    ledger["entries"]["primary_labels"]["actual_usd"] = float(actual_usd)
+    ledger["totals"] = _spend_totals(ledger["entries"])
+    _validate_spend_ledger(
+        ledger=ledger,
+        config=config,
+        manifest=manifest,
+        manifest_path=manifest_path,
+    )
+    atomic_json(ledger_path, ledger)
+    return ledger
+
+
 def prepare_batch(
     *,
     config: Mapping[str, Any],
@@ -429,7 +590,14 @@ def prepare_batch(
         "cost_preflight": costs,
         "repository_provenance": repository_provenance(),
     }
-    atomic_json(output_root / "batch_manifest.json", manifest)
+    manifest_path = output_root / "batch_manifest.json"
+    atomic_json(manifest_path, manifest)
+    initialize_spend_ledger(
+        config=config,
+        manifest=manifest,
+        manifest_path=manifest_path,
+        ledger_path=output_root / "spend_ledger.json",
+    )
     return manifest
 
 
@@ -452,6 +620,15 @@ def submit_batch(
     hard_cap = float(config["autointerp"]["hard_planned_cost_usd"])
     if cost > hard_cap:
         raise RuntimeError("preflight cost exceeds the hard cap")
+    ledger_path = manifest_path.parent / "spend_ledger.json"
+    if not ledger_path.is_file():
+        raise RuntimeError("autointerp spend ledger is missing")
+    _validate_spend_ledger(
+        ledger=read_json(ledger_path),
+        config=config,
+        manifest=manifest,
+        manifest_path=manifest_path,
+    )
     if state_path.exists():
         state = read_json(state_path)
         if (
@@ -505,31 +682,42 @@ def _extract_output_text(body: Mapping[str, Any]) -> str:
     return texts[0]
 
 
-def finalize_batch(
+def validate_batch_output(
     *,
     config: Mapping[str, Any],
-    manifest_path: Path,
     request_path: Path,
     mapping_path: Path,
     batch_output_path: Path,
-    output_root: Path,
 ) -> dict[str, Any]:
-    validate_config_schema(config)
-    manifest = read_json(manifest_path)
-    if manifest.get("request_jsonl_sha256") != file_sha256(request_path):
-        raise RuntimeError("request JSONL changed after submission")
-    if manifest.get("mapping_jsonl_sha256") != file_sha256(mapping_path):
-        raise RuntimeError("Batch mapping changed after submission")
+    """Validate every result before a downloaded Batch artifact is accepted."""
+
     requests = read_jsonl(request_path)
-    mapping = {row["custom_id"]: row for row in read_jsonl(mapping_path)}
+    mapping_rows = read_jsonl(mapping_path)
+    if any(not isinstance(row.get("custom_id"), str) or not row["custom_id"] for row in requests):
+        raise RuntimeError("Batch request JSONL contains an invalid custom ID")
+    if any(
+        not isinstance(row.get("custom_id"), str) or not row["custom_id"]
+        for row in mapping_rows
+    ):
+        raise RuntimeError("Batch mapping contains an invalid custom ID")
+    mapping = {row["custom_id"]: row for row in mapping_rows}
     expected_ids = [row["custom_id"] for row in requests]
-    if len(mapping) != len(expected_ids) or set(mapping) != set(expected_ids):
+    if len(expected_ids) != len(set(expected_ids)):
+        raise RuntimeError("Batch request JSONL contains duplicate custom IDs")
+    if len(mapping) != len(mapping_rows) or len(mapping) != len(expected_ids) or set(mapping) != set(
+        expected_ids
+    ):
         raise RuntimeError("Batch mapping is missing or duplicating request IDs")
     output_rows = read_jsonl(batch_output_path)
     observed_ids = [row.get("custom_id") for row in output_rows]
-    duplicates = sorted({value for value in observed_ids if observed_ids.count(value) > 1})
+    if any(not isinstance(value, str) or not value for value in observed_ids):
+        raise RuntimeError("Batch output contains an invalid custom ID")
+    counts: dict[Any, int] = {}
+    for value in observed_ids:
+        counts[value] = counts.get(value, 0) + 1
+    duplicates = sorted(str(value) for value, count in counts.items() if count > 1)
     missing = sorted(set(expected_ids).difference(observed_ids))
-    extra = sorted(set(observed_ids).difference(expected_ids))
+    extra = sorted(str(value) for value in set(observed_ids).difference(expected_ids))
     if duplicates or missing or extra:
         raise RuntimeError(
             f"Batch ID mismatch: duplicates={duplicates}, missing={missing}, extra={extra}"
@@ -579,8 +767,294 @@ def finalize_batch(
         output_tokens=total_output_tokens,
         config=config,
     )
-    if actual_cost > float(config["autointerp"]["hard_planned_cost_usd"]):
-        raise RuntimeError("actual primary Batch cost exceeds the hard experiment cap")
+    return {
+        "results": results,
+        "request_count": len(results),
+        "input_tokens": total_input_tokens,
+        "output_tokens": total_output_tokens,
+        "primary_batch_cost_usd": actual_cost,
+    }
+
+
+def _api_value(value: Any, name: str) -> Any:
+    if isinstance(value, Mapping):
+        return value.get(name)
+    return getattr(value, name, None)
+
+
+def _request_counts(value: Any) -> dict[str, int] | None:
+    if value is None:
+        return None
+    result = {}
+    for name in ("total", "completed", "failed"):
+        item = _api_value(value, name)
+        if item is None:
+            return None
+        result[name] = int(item)
+    return result
+
+
+def _downloaded_bytes(value: Any) -> bytes:
+    text = getattr(value, "text", None)
+    if callable(text):
+        text = text()
+    if isinstance(text, str):
+        return text.encode()
+    content = getattr(value, "content", None)
+    if isinstance(content, bytes):
+        return content
+    read = getattr(value, "read", None)
+    if callable(read):
+        payload = read()
+        if isinstance(payload, bytes):
+            return payload
+        if isinstance(payload, str):
+            return payload.encode()
+    raise RuntimeError("OpenAI Files response did not contain text or bytes")
+
+
+def _validate_batch_state(
+    *,
+    state: Mapping[str, Any],
+    config: Mapping[str, Any],
+    manifest_path: Path,
+    request_path: Path,
+) -> None:
+    if state.get("schema_version") != 1 or state.get("submitted") is not True:
+        raise RuntimeError("autointerp Batch state is not a submitted schema-v1 job")
+    if state.get("manifest_sha256") != file_sha256(manifest_path):
+        raise RuntimeError("autointerp Batch state belongs to another manifest")
+    if state.get("request_jsonl_sha256") != file_sha256(request_path):
+        raise RuntimeError("autointerp Batch state belongs to another request JSONL")
+    if state.get("endpoint") != config["autointerp"]["endpoint"]:
+        raise RuntimeError("autointerp Batch state endpoint drift")
+    if state.get("completion_window") != config["autointerp"]["completion_window"]:
+        raise RuntimeError("autointerp Batch state completion-window drift")
+    for name in ("batch_id", "input_file_id"):
+        if not isinstance(state.get(name), str) or not state[name]:
+            raise RuntimeError(f"autointerp Batch state lacks {name}")
+
+
+def poll_and_download_batch(
+    *,
+    config: Mapping[str, Any],
+    manifest_path: Path,
+    request_path: Path,
+    mapping_path: Path,
+    state_path: Path,
+    batch_output_path: Path,
+    poll_seconds: float = 60,
+    timeout_seconds: float = 26 * 3600,
+    max_consecutive_poll_errors: int = 5,
+    wait: bool = True,
+    client: Any | None = None,
+) -> dict[str, Any]:
+    """Resume one submitted Batch until its validated output is durable locally."""
+
+    validate_config_schema(config)
+    if (
+        not math.isfinite(poll_seconds)
+        or not math.isfinite(timeout_seconds)
+        or poll_seconds < 0
+        or timeout_seconds <= 0
+        or max_consecutive_poll_errors <= 0
+    ):
+        raise ValueError("Batch polling intervals must be nonnegative and finite")
+    manifest = read_json(manifest_path)
+    if manifest.get("confirmation_gate", {}).get("passed") is not True:
+        raise RuntimeError("refusing to poll an unconfirmed autointerp batch")
+    if manifest.get("request_jsonl_sha256") != file_sha256(request_path):
+        raise RuntimeError("Batch request file changed after submission")
+    if manifest.get("mapping_jsonl_sha256") != file_sha256(mapping_path):
+        raise RuntimeError("Batch mapping changed after submission")
+    if not state_path.is_file():
+        raise RuntimeError("submitted Batch state is missing; polling never submits a job")
+    state = read_json(state_path)
+    _validate_batch_state(
+        state=state,
+        config=config,
+        manifest_path=manifest_path,
+        request_path=request_path,
+    )
+    ledger_path = manifest_path.parent / "spend_ledger.json"
+    if not ledger_path.is_file():
+        raise RuntimeError("autointerp spend ledger is missing")
+    _validate_spend_ledger(
+        ledger=read_json(ledger_path),
+        config=config,
+        manifest=manifest,
+        manifest_path=manifest_path,
+    )
+
+    def accept_local_output() -> dict[str, Any]:
+        if state.get("status") != "completed" or not state.get("output_file_id"):
+            raise RuntimeError("downloaded Batch output lacks completed remote provenance")
+        validated = validate_batch_output(
+            config=config,
+            request_path=request_path,
+            mapping_path=mapping_path,
+            batch_output_path=batch_output_path,
+        )
+        digest = file_sha256(batch_output_path)
+        prior_digest = state.get("batch_output_sha256")
+        if prior_digest is not None and prior_digest != digest:
+            raise RuntimeError("downloaded Batch output changed after validation")
+        record_primary_batch_spend(
+            config=config,
+            manifest=manifest,
+            manifest_path=manifest_path,
+            ledger_path=ledger_path,
+            actual_usd=float(validated["primary_batch_cost_usd"]),
+        )
+        state.update(
+            {
+                "downloaded": True,
+                "validated": True,
+                "batch_output_path": str(batch_output_path.resolve()),
+                "batch_output_sha256": digest,
+                "batch_output_bytes": batch_output_path.stat().st_size,
+                "validated_request_count": int(validated["request_count"]),
+                "usage": {
+                    "input_tokens": int(validated["input_tokens"]),
+                    "output_tokens": int(validated["output_tokens"]),
+                    "primary_batch_cost_usd": float(validated["primary_batch_cost_usd"]),
+                },
+            }
+        )
+        atomic_json(state_path, state)
+        return state
+
+    if state.get("downloaded") is True:
+        if not batch_output_path.is_file():
+            raise RuntimeError("Batch state records a download but the output file is missing")
+        return accept_local_output()
+
+    if client is None:
+        try:
+            from openai import OpenAI
+        except ImportError as error:
+            raise RuntimeError("install the exp10 autointerp optional dependency") from error
+        client = OpenAI()
+
+    active = {"validating", "in_progress", "finalizing", "cancelling"}
+    failed = {"failed", "expired", "cancelled"}
+    started = time.monotonic()
+    consecutive_poll_errors = 0
+    while True:
+        try:
+            batch = client.batches.retrieve(state["batch_id"])
+        except Exception as error:
+            consecutive_poll_errors += 1
+            state.update(
+                {
+                    "poll_error_count": int(state.get("poll_error_count", 0)) + 1,
+                    "consecutive_poll_errors": consecutive_poll_errors,
+                    "last_poll_error_type": type(error).__name__,
+                    "last_polled_unix_seconds": time.time(),
+                }
+            )
+            atomic_json(state_path, state)
+            if (
+                not wait
+                or consecutive_poll_errors >= max_consecutive_poll_errors
+                or time.monotonic() - started >= timeout_seconds
+            ):
+                raise RuntimeError(
+                    f"OpenAI Batch polling failed {consecutive_poll_errors} consecutive times"
+                ) from error
+            time.sleep(poll_seconds)
+            continue
+        consecutive_poll_errors = 0
+        identities = {
+            "batch_id": _api_value(batch, "id"),
+            "input_file_id": _api_value(batch, "input_file_id"),
+            "endpoint": _api_value(batch, "endpoint"),
+            "completion_window": _api_value(batch, "completion_window"),
+        }
+        for name, observed in identities.items():
+            if observed != state[name]:
+                raise RuntimeError(f"retrieved Batch {name} drift")
+        status = _api_value(batch, "status")
+        if status not in active | failed | {"completed"}:
+            raise RuntimeError(f"retrieved Batch has unknown status {status!r}")
+        counts = _request_counts(_api_value(batch, "request_counts"))
+        state.update(
+            {
+                "status": status,
+                "output_file_id": _api_value(batch, "output_file_id"),
+                "error_file_id": _api_value(batch, "error_file_id"),
+                "request_counts": counts,
+                "consecutive_poll_errors": 0,
+                "last_polled_unix_seconds": time.time(),
+            }
+        )
+        atomic_json(state_path, state)
+        if status in failed:
+            raise RuntimeError(f"OpenAI Batch reached terminal status {status}")
+        if status == "completed":
+            expected = int(manifest["request_count"])
+            if counts is None or counts != {"total": expected, "completed": expected, "failed": 0}:
+                raise RuntimeError(f"completed Batch request counts failed closed: {counts}")
+            if not isinstance(state.get("output_file_id"), str) or not state["output_file_id"]:
+                raise RuntimeError("completed Batch has no output file ID")
+            if state.get("error_file_id") is not None:
+                raise RuntimeError("completed Batch unexpectedly has an error file")
+            if not batch_output_path.is_file():
+                response = client.files.content(state["output_file_id"])
+                temporary = batch_output_path.with_suffix(batch_output_path.suffix + ".download")
+                temporary.parent.mkdir(parents=True, exist_ok=True)
+                temporary.write_bytes(_downloaded_bytes(response))
+                try:
+                    validate_batch_output(
+                        config=config,
+                        request_path=request_path,
+                        mapping_path=mapping_path,
+                        batch_output_path=temporary,
+                    )
+                except Exception:
+                    temporary.unlink(missing_ok=True)
+                    raise
+                temporary.replace(batch_output_path)
+            return accept_local_output()
+        if not wait:
+            return state
+        if time.monotonic() - started >= timeout_seconds:
+            raise TimeoutError(f"OpenAI Batch remained {status} past the polling timeout")
+        time.sleep(poll_seconds)
+
+
+def finalize_batch(
+    *,
+    config: Mapping[str, Any],
+    manifest_path: Path,
+    request_path: Path,
+    mapping_path: Path,
+    batch_output_path: Path,
+    output_root: Path,
+) -> dict[str, Any]:
+    validate_config_schema(config)
+    manifest = read_json(manifest_path)
+    if manifest.get("request_jsonl_sha256") != file_sha256(request_path):
+        raise RuntimeError("request JSONL changed after submission")
+    if manifest.get("mapping_jsonl_sha256") != file_sha256(mapping_path):
+        raise RuntimeError("Batch mapping changed after submission")
+    validated = validate_batch_output(
+        config=config,
+        request_path=request_path,
+        mapping_path=mapping_path,
+        batch_output_path=batch_output_path,
+    )
+    results = validated["results"]
+    total_input_tokens = int(validated["input_tokens"])
+    total_output_tokens = int(validated["output_tokens"])
+    actual_cost = float(validated["primary_batch_cost_usd"])
+    record_primary_batch_spend(
+        config=config,
+        manifest=manifest,
+        manifest_path=manifest_path,
+        ledger_path=manifest_path.parent / "spend_ledger.json",
+        actual_usd=actual_cost,
+    )
     result_path = output_root / "labels.jsonl"
     atomic_jsonl(result_path, results)
     grouped: dict[str, list[dict[str, Any]]] = {}
