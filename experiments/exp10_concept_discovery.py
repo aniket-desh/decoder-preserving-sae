@@ -128,7 +128,7 @@ def load_config(path: Path = DEFAULT_CONFIG) -> dict[str, Any]:
         raise ValueError("companion full-code probes must use the frozen exact-value CSR format")
     if (
         benchmark.get("companion_l2_path_optimization")
-        != "parallel_independent_cold_C_loky_cold_selected_C_refit"
+        != "batched_all_representations_independent_cold_C_loky_cold_selected_C_refit"
     ):
         raise ValueError("companion L2 probes must use the frozen parallel cold-C optimization")
     if "unfiltered logreg baseline" not in benchmark["companion_regularization_rationale"]:
@@ -1171,58 +1171,20 @@ def _cold_l2_validation_score(
     return float(np.mean(fold_scores))
 
 
-def find_best_reg_l2_parallel_cold_C(
-    X_train: Any,
-    y_train: Any,
-    X_test: Any,
-    y_test: Any,
+def _finalize_cold_l2_result(
     *,
+    best_C: float | None,
+    avg_scores: Sequence[float],
+    train: Any,
+    train_labels: np.ndarray,
+    test: Any,
+    test_labels: np.ndarray,
     seed: int,
-    n_jobs: int,
-    _parallel_backend: str = "loky",
 ) -> CompanionProbeResult:
-    """Run the exact sae-probes cold L2 fits concurrently across C values.
+    """Mirror the upstream selected-C refit and held-out metrics exactly."""
 
-    Every candidate remains a fresh cold sklearn estimator. Joblib returns
-    scores in the original high-to-low-C order, preserving ``np.argmax`` ties,
-    and the selected C receives the exact upstream cold shuffled full refit.
-    """
-
-    from joblib import Parallel, delayed, parallel_config
     from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
-
-    train = _probe_matrix(X_train)
-    test = _probe_matrix(X_test)
-    train_labels = np.asarray(y_train)
-    test_labels = np.asarray(y_test)
-    if train.shape[0] != len(train_labels) or test.shape[0] != len(test_labels):
-        raise ValueError("companion probe matrix/label lengths differ")
-    if train.shape[1] != test.shape[1]:
-        raise ValueError("companion train/test widths differ")
-    if n_jobs < 1:
-        raise ValueError("parallel cold-C job count must be positive")
-    if _parallel_backend not in {"loky", "threading"}:
-        raise ValueError("parallel cold-C backend must be loky or threading")
-
-    original_cs = np.logspace(5, -5, 10)
-    best_C: float | None = None
-    avg_scores: list[float] = []
-    if train.shape[0] > 3:
-        splits = _companion_cv_splits(train, train_labels, seed)
-        backend_options = {"inner_max_num_threads": 1} if _parallel_backend == "loky" else {}
-        with parallel_config(backend=_parallel_backend, **backend_options):
-            avg_scores = Parallel(n_jobs=min(n_jobs, len(original_cs)))(
-                delayed(_cold_l2_validation_score)(
-                    float(C),
-                    train,
-                    train_labels,
-                    splits,
-                    seed,
-                )
-                for C in original_cs
-            )
-        best_C = float(original_cs[int(np.argmax(avg_scores))])
 
     final_model = LogisticRegression(
         **({"C": best_C} if best_C is not None else {}),
@@ -1255,6 +1217,126 @@ def find_best_reg_l2_parallel_cold_C(
     return CompanionProbeResult(metrics=metrics, classifier=final_model, scaler=None)
 
 
+def find_best_reg_l2_parallel_cold_C_batch(
+    representations: Mapping[str, tuple[Any, Any]],
+    y_train: Any,
+    y_test: Any,
+    *,
+    seed: int,
+    n_jobs: int,
+    _parallel_backend: str = "loky",
+) -> dict[str, CompanionProbeResult]:
+    """Fit several frozen L2 probes through one exact cold-C work queue.
+
+    Each representation retains its own ten candidates, estimators, scores,
+    original-order tie rule, and selected-C refit.  Pooling only the independent
+    validation jobs prevents five short probe grids from repeatedly leaving the
+    worker pool underfilled.
+    """
+
+    from joblib import Parallel, delayed, parallel_config
+
+    if not representations:
+        raise ValueError("batched companion probes require at least one representation")
+    if n_jobs < 1:
+        raise ValueError("parallel cold-C job count must be positive")
+    if _parallel_backend not in {"loky", "threading"}:
+        raise ValueError("parallel cold-C backend must be loky or threading")
+
+    train_labels = np.asarray(y_train)
+    test_labels = np.asarray(y_test)
+    normalized: dict[str, tuple[Any, Any]] = {}
+    for name, (X_train, X_test) in representations.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError("batched companion representation names must be nonempty strings")
+        train = _probe_matrix(X_train)
+        test = _probe_matrix(X_test)
+        if train.shape[0] != len(train_labels) or test.shape[0] != len(test_labels):
+            raise ValueError("companion probe matrix/label lengths differ")
+        if train.shape[1] != test.shape[1]:
+            raise ValueError("companion train/test widths differ")
+        normalized[name] = (train, test)
+
+    original_cs = np.logspace(5, -5, 10)
+    names = list(normalized)
+    average_scores: dict[str, list[float]] = {name: [] for name in names}
+    best_cs: dict[str, float | None] = {name: None for name in names}
+    backend_options = {"inner_max_num_threads": 1} if _parallel_backend == "loky" else {}
+    jobs: list[tuple[str, float, Any]] = []
+    if len(train_labels) > 3:
+        first_train = next(iter(normalized.values()))[0]
+        splits = _companion_cv_splits(first_train, train_labels, seed)
+        jobs = [
+            (name, float(C), train)
+            for name, (train, _test) in normalized.items()
+            for C in original_cs
+        ]
+    with parallel_config(backend=_parallel_backend, **backend_options):
+        with Parallel(n_jobs=min(n_jobs, max(len(jobs), len(names)))) as parallel:
+            scores = parallel(
+                delayed(_cold_l2_validation_score)(
+                    C,
+                    train,
+                    train_labels,
+                    splits,
+                    seed,
+                )
+                for _name, C, train in jobs
+            )
+            if jobs:
+                offset = 0
+                for name in names:
+                    values = [
+                        float(value) for value in scores[offset : offset + len(original_cs)]
+                    ]
+                    average_scores[name] = values
+                    best_cs[name] = float(original_cs[int(np.argmax(values))])
+                    offset += len(original_cs)
+                if offset != len(scores):
+                    raise RuntimeError("batched cold-C score accounting drifted")
+
+            finalized = parallel(
+                delayed(_finalize_cold_l2_result)(
+                    best_C=best_cs[name],
+                    avg_scores=average_scores[name],
+                    train=normalized[name][0],
+                    train_labels=train_labels,
+                    test=normalized[name][1],
+                    test_labels=test_labels,
+                    seed=seed,
+                )
+                for name in names
+            )
+    return dict(zip(names, finalized, strict=True))
+
+
+def find_best_reg_l2_parallel_cold_C(
+    X_train: Any,
+    y_train: Any,
+    X_test: Any,
+    y_test: Any,
+    *,
+    seed: int,
+    n_jobs: int,
+    _parallel_backend: str = "loky",
+) -> CompanionProbeResult:
+    """Run the exact sae-probes cold L2 fits concurrently across C values.
+
+    Every candidate remains a fresh cold sklearn estimator. Joblib returns
+    scores in the original high-to-low-C order, preserving ``np.argmax`` ties,
+    and the selected C receives the exact upstream cold shuffled full refit.
+    """
+
+    return find_best_reg_l2_parallel_cold_C_batch(
+        {"single": (X_train, X_test)},
+        y_train,
+        y_test,
+        seed=seed,
+        n_jobs=n_jobs,
+        _parallel_backend=_parallel_backend,
+    )["single"]
+
+
 def run_companion_job(
     *,
     config: Mapping[str, Any],
@@ -1280,8 +1362,6 @@ def run_companion_job(
 
     from sae_probes.run_sae_evals import DATASET_SIZES
     from sae_probes.utils_data import get_xy_traintest
-    from sae_probes.utils_training import find_best_reg
-
     torch_device = torch.device(device)
     if adapters is None:
         adapters = {
@@ -1315,7 +1395,39 @@ def run_companion_job(
         )
         test_labels = torch.as_tensor(y_test).detach().cpu()
         heldout_identity = _heldout_identity(config, dataset, probe_seed, len(test_labels))
-        original = find_best_reg(X_train, y_train, X_test, y_test, seed=probe_seed)
+        method_representations: dict[str, tuple[Tensor, Tensor, Tensor, Tensor]] = {}
+        probe_representations: dict[str, tuple[Any, Any]] = {
+            "original_residual": (X_train, X_test)
+        }
+        for method, adapter in adapters.items():
+            train_code, train_reconstruction = _representations(
+                adapter, X_train, device=torch_device
+            )
+            test_code, test_reconstruction = _representations(
+                adapter, X_test, device=torch_device
+            )
+            method_representations[method] = (
+                train_code,
+                train_reconstruction,
+                test_code,
+                test_reconstruction,
+            )
+            probe_representations[f"{method}.full_code"] = (
+                _full_code_csr(train_code),
+                _full_code_csr(test_code),
+            )
+            probe_representations[f"{method}.reconstruction"] = (
+                train_reconstruction,
+                test_reconstruction,
+            )
+        probe_results = find_best_reg_l2_parallel_cold_C_batch(
+            probe_representations,
+            y_train,
+            y_test,
+            seed=probe_seed,
+            n_jobs=int(config["runtime"]["companion_full_code_cold_C_jobs_per_worker"]),
+        )
+        original = probe_results["original_residual"]
         metrics: dict[str, Any] = {"original_residual": _metrics_dict(original), "methods": {}}
         weights: dict[str, Any] = {
             "schema_version": 2,
@@ -1332,26 +1444,12 @@ def run_companion_job(
             },
             "original_residual": _classifier_state(original),
         }
-        for method, adapter in adapters.items():
-            train_code, train_reconstruction = _representations(
-                adapter, X_train, device=torch_device
+        for method in adapters:
+            _train_code, _train_reconstruction, test_code, test_reconstruction = (
+                method_representations[method]
             )
-            test_code, test_reconstruction = _representations(adapter, X_test, device=torch_device)
-            full_code = find_best_reg_l2_parallel_cold_C(
-                _full_code_csr(train_code),
-                y_train,
-                _full_code_csr(test_code),
-                y_test,
-                seed=probe_seed,
-                n_jobs=int(config["runtime"]["companion_full_code_cold_C_jobs_per_worker"]),
-            )
-            reconstruction = find_best_reg(
-                train_reconstruction,
-                y_train,
-                test_reconstruction,
-                y_test,
-                seed=probe_seed,
-            )
+            full_code = probe_results[f"{method}.full_code"]
+            reconstruction = probe_results[f"{method}.reconstruction"]
             metrics["methods"][method] = {
                 "full_code": _metrics_dict(full_code),
                 "reconstruction": _metrics_dict(reconstruction),
@@ -1376,7 +1474,7 @@ def run_companion_job(
             "regularization": "sae_probes_find_best_reg_l2",
             "full_code_matrix_format": "scipy_csr_exact_values",
             "l2_path_optimization": (
-                "parallel_independent_cold_C_loky_cold_selected_C_refit"
+                "batched_all_representations_independent_cold_C_loky_cold_selected_C_refit"
             ),
             "full_code_cold_C_jobs": int(
                 config["runtime"]["companion_full_code_cold_C_jobs_per_worker"]
@@ -1492,7 +1590,9 @@ def _fit_sparse_smoke(
             del result
 
 
-def _peak_rss_mib() -> float:
+def _parent_peak_rss_mib() -> float:
+    """Return parent-process peak RSS; loky children are watched separately."""
+
     value = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
     if sys.platform == "darwin":
         return value / (1024 * 1024)
@@ -1873,7 +1973,7 @@ _TIMING_TASK_KEYS = {
     "n_test",
     "stage_seconds",
     "total_seconds",
-    "peak_rss_mib",
+    "parent_peak_rss_mib",
     "peak_gpu_allocated_bytes",
     "peak_gpu_reserved_bytes",
 }
@@ -1889,9 +1989,7 @@ _SPARSE_TIMING_STAGE_KEYS = {
 _COMPANION_TIMING_STAGE_KEYS = {
     "data_load",
     "encode_decode",
-    "original_l2",
-    "full_code_l2",
-    "reconstruction_l2",
+    "batched_l2",
     "total",
 }
 _TIMING_READY_KEYS = {
@@ -2021,7 +2119,7 @@ def _validate_timing_rows(config: Mapping[str, Any], rows: Any) -> list[dict[str
             components = [float(value) for key, value in stage.items() if key != "total"]
             if not math.isclose(float(stage["total"]), sum(components), rel_tol=1e-9, abs_tol=1e-6):
                 raise RuntimeError("timing task component total is inconsistent")
-        for key in ("total_seconds", "peak_rss_mib"):
+        for key in ("total_seconds", "parent_peak_rss_mib"):
             value = float(row[key])
             if not math.isfinite(value) or value <= 0:
                 raise RuntimeError("timing task total or RSS is invalid")
@@ -2275,8 +2373,6 @@ def run_timing_worker(
 
     from sae_probes.run_sae_evals import DATASET_SIZES
     from sae_probes.utils_data import get_xy_traintest
-    from sae_probes.utils_training import find_best_reg
-
     selected = select_timing_smoke_tasks(
         config,
         {dataset: int(DATASET_SIZES[dataset]) for dataset in config["benchmark"]["datasets"]},
@@ -2397,35 +2493,37 @@ def run_timing_worker(
                 for method, adapter in adapters.items()
             },
         )
-        _, original_l2_seconds = _timed_call(
+        batched_representations: dict[str, tuple[Any, Any]] = {
+            "original_residual": (X_train, X_test)
+        }
+        for method, (
+            train_code,
+            train_reconstruction,
+            test_code,
+            test_reconstruction,
+        ) in companion_representations.items():
+            batched_representations[f"{method}.full_code"] = (
+                _full_code_csr(train_code),
+                _full_code_csr(test_code),
+            )
+            batched_representations[f"{method}.reconstruction"] = (
+                train_reconstruction,
+                test_reconstruction,
+            )
+        _, batched_l2_seconds = _timed_call(
             torch_device,
-            lambda: find_best_reg(X_train, y_train, X_test, y_test, seed=probe_seed),
+            lambda: find_best_reg_l2_parallel_cold_C_batch(
+                batched_representations,
+                y_train,
+                y_test,
+                seed=probe_seed,
+                n_jobs=int(config["runtime"]["companion_full_code_cold_C_jobs_per_worker"]),
+            ),
         )
-
-        def fit_full_codes() -> None:
-            for train_code, _train_recon, test_code, _test_recon in companion_representations.values():
-                find_best_reg_l2_parallel_cold_C(
-                    _full_code_csr(train_code),
-                    y_train,
-                    _full_code_csr(test_code),
-                    y_test,
-                    seed=probe_seed,
-                    n_jobs=int(config["runtime"]["companion_full_code_cold_C_jobs_per_worker"]),
-                )
-
-        _, full_code_l2_seconds = _timed_call(torch_device, fit_full_codes)
-
-        def fit_reconstructions() -> None:
-            for _train_code, train_recon, _test_code, test_recon in companion_representations.values():
-                find_best_reg(train_recon, y_train, test_recon, y_test, seed=probe_seed)
-
-        _, reconstruction_l2_seconds = _timed_call(torch_device, fit_reconstructions)
         companion_stage = {
             "data_load": companion_data_seconds,
             "encode_decode": companion_encode_seconds,
-            "original_l2": original_l2_seconds,
-            "full_code_l2": full_code_l2_seconds,
-            "reconstruction_l2": reconstruction_l2_seconds,
+            "batched_l2": batched_l2_seconds,
         }
         companion_stage["total"] = sum(companion_stage.values())
         gpu_allocated = (
@@ -2442,7 +2540,7 @@ def run_timing_worker(
                 "n_test": len(X_test),
                 "stage_seconds": {**sparse_stages, "companion": companion_stage},
                 "total_seconds": time.perf_counter() - task_started,
-                "peak_rss_mib": _peak_rss_mib(),
+                "parent_peak_rss_mib": _parent_peak_rss_mib(),
                 "peak_gpu_allocated_bytes": gpu_allocated,
                 "peak_gpu_reserved_bytes": gpu_reserved,
             }
@@ -2696,7 +2794,7 @@ def _assemble_timing_smoke_report(
         cache_generation_seconds=float(cache_timing["generation_seconds"]),
     )
     return {
-        "schema_version": 6,
+        "schema_version": 7,
         "complete": True,
         "passed": projection["projected_pod_hours"]
         <= float(smoke["maximum_projected_pod_hours"]),
@@ -2714,7 +2812,7 @@ def _assemble_timing_smoke_report(
         "saved_concept_metric_count": 0,
         "companion_full_code_matrix_format": "scipy_csr_exact_values",
         "companion_l2_path_optimization": (
-            "parallel_independent_cold_C_loky_cold_selected_C_refit"
+            "batched_all_representations_independent_cold_C_loky_cold_selected_C_refit"
         ),
         "companion_full_code_cold_C_jobs_per_worker": int(
             config["runtime"]["companion_full_code_cold_C_jobs_per_worker"]
@@ -2788,7 +2886,7 @@ def verify_timing_smoke_gate(config: Mapping[str, Any], output_root: Path) -> di
     if not isinstance(report, Mapping) or set(report) != _TIMING_REPORT_KEYS:
         raise RuntimeError("timing-smoke top-level schema or privacy boundary drift")
     required = {
-        "schema_version": 6,
+        "schema_version": 7,
         "complete": True,
         "passed": True,
         "config_digest": canonical_digest(config),
@@ -2802,7 +2900,7 @@ def verify_timing_smoke_gate(config: Mapping[str, Any], output_root: Path) -> di
         "saved_concept_metric_count": 0,
         "companion_full_code_matrix_format": "scipy_csr_exact_values",
         "companion_l2_path_optimization": (
-            "parallel_independent_cold_C_loky_cold_selected_C_refit"
+            "batched_all_representations_independent_cold_C_loky_cold_selected_C_refit"
         ),
         "companion_full_code_cold_C_jobs_per_worker": int(
             config["runtime"]["companion_full_code_cold_C_jobs_per_worker"]

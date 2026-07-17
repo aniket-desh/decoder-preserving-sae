@@ -92,7 +92,7 @@ def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
             "family_by_dataset": {"task_a": "family_a"},
             "companion_full_code_matrix_format": "scipy_csr_exact_values",
             "companion_l2_path_optimization": (
-                "parallel_independent_cold_C_loky_cold_selected_C_refit"
+                "batched_all_representations_independent_cold_C_loky_cold_selected_C_refit"
             ),
             "probe_seeds": seeds,
             "ks": [1, 2],
@@ -245,7 +245,7 @@ def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
                 "companion": {"total": 3.0},
             },
             "total_seconds": 6.0,
-            "peak_rss_mib": 100.0,
+            "parent_peak_rss_mib": 100.0,
             "peak_gpu_allocated_bytes": 1000,
             "peak_gpu_reserved_bytes": 2000,
         }
@@ -313,7 +313,7 @@ def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
     _json(
         output / "timing_smoke.json",
         {
-            "schema_version": 6,
+            "schema_version": 7,
             "complete": True,
             "passed": True,
             "config_digest": digest,
@@ -330,7 +330,7 @@ def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
             "saved_concept_metric_count": 0,
             "companion_full_code_matrix_format": "scipy_csr_exact_values",
             "companion_l2_path_optimization": (
-                "parallel_independent_cold_C_loky_cold_selected_C_refit"
+                "batched_all_representations_independent_cold_C_loky_cold_selected_C_refit"
             ),
             "companion_full_code_cold_C_jobs_per_worker": 8,
             "runtime_resources": _runtime_resources(),
@@ -489,7 +489,7 @@ def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
             "regularization": "sae_probes_find_best_reg_l2",
             "full_code_matrix_format": "scipy_csr_exact_values",
             "l2_path_optimization": (
-                "parallel_independent_cold_C_loky_cold_selected_C_refit"
+                "batched_all_representations_independent_cold_C_loky_cold_selected_C_refit"
             ),
             "full_code_cold_C_jobs": 8,
             "heldout_split_id": split["split_id"],

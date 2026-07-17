@@ -31,7 +31,7 @@ def test_autonomous_supervisor_preserves_fail_closed_contracts() -> None:
     assert "for gpu_index in 0 1 2 3" in source
     assert 'gpu_blockers+=("GPU${gpu_index}=${gpu_memory}MiB")' in source
 
-    assert ".schema_version == 6" in source
+    assert ".schema_version == 7" in source
     assert ".config_digest == $config_digest" in source
     assert ".probe_seed == $probe_seed" in source
     assert ".task_count == $task_count" in source

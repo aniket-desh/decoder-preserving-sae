@@ -219,7 +219,7 @@ if ! jq -e \
   --argjson effective_cpu_count "$EXPECTED_EFFECTIVE_CPU_COUNT" \
   --argjson threads_per_worker "$EXPECTED_THREADS_PER_WORKER" \
   '
-    .schema_version == 6
+    .schema_version == 7
     and .complete == true
     and .config_digest == $config_digest
     and .probe_seed == $probe_seed
@@ -261,7 +261,7 @@ if ! jq -e \
     and (.projection.projected_pod_hours | type == "number")
     and (.passed == (.projection.projected_pod_hours <= $maximum_pod_hours))
   ' "$TIMING_REPORT" >/dev/null; then
-  write_status "timing_gate" "error" "blind timing report failed schema-v6/config/runtime identity checks"
+  write_status "timing_gate" "error" "blind timing report failed schema-v7/config/runtime identity checks"
   exit 1
 fi
 if ! jq -e '.passed == true' "$TIMING_REPORT" >/dev/null; then

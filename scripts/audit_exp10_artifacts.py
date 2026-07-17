@@ -26,7 +26,7 @@ TIMING_TASK_KEYS = {
     "n_test",
     "stage_seconds",
     "total_seconds",
-    "peak_rss_mib",
+    "parent_peak_rss_mib",
     "peak_gpu_allocated_bytes",
     "peak_gpu_reserved_bytes",
 }
@@ -522,7 +522,7 @@ class ArtifactAuditor:
             _require(
                 isinstance(report, Mapping)
                 and set(report) == TIMING_REPORT_KEYS
-                and report.get("schema_version") == 6
+                and report.get("schema_version") == 7
                 and report.get("complete") is True
                 and report.get("passed") is True,
                 "timing-smoke gate did not pass",
@@ -534,7 +534,7 @@ class ArtifactAuditor:
             )
             _require(
                 report.get("companion_l2_path_optimization")
-                == "parallel_independent_cold_C_loky_cold_selected_C_refit",
+                == "batched_all_representations_independent_cold_C_loky_cold_selected_C_refit",
                 "timing-smoke companion L2 path optimization drift",
             )
             _require(
@@ -1185,7 +1185,7 @@ class ArtifactAuditor:
                     "regularization": "sae_probes_find_best_reg_l2",
                     "full_code_matrix_format": "scipy_csr_exact_values",
                     "l2_path_optimization": (
-                        "parallel_independent_cold_C_loky_cold_selected_C_refit"
+                        "batched_all_representations_independent_cold_C_loky_cold_selected_C_refit"
                     ),
                     "full_code_cold_C_jobs": int(
                         self.config["runtime"]["companion_full_code_cold_C_jobs_per_worker"]

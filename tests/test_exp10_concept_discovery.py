@@ -62,9 +62,7 @@ def _timing_rows(*, multiplier: float = 1.0) -> list[dict[str, object]]:
         companion = {
             "data_load": 0.2 * multiplier,
             "encode_decode": 0.3 * multiplier,
-            "original_l2": 0.5 * multiplier,
-            "full_code_l2": 1.5 * multiplier,
-            "reconstruction_l2": 0.5 * multiplier,
+            "batched_l2": 2.5 * multiplier,
             "total": 3.0 * multiplier,
         }
         rows.append(
@@ -79,7 +77,7 @@ def _timing_rows(*, multiplier: float = 1.0) -> list[dict[str, object]]:
                     "companion": companion,
                 },
                 "total_seconds": 6.0 * multiplier,
-                "peak_rss_mib": 512.0,
+                "parent_peak_rss_mib": 512.0,
                 "peak_gpu_allocated_bytes": 1024,
                 "peak_gpu_reserved_bytes": 2048,
             }
@@ -144,16 +142,33 @@ def native_payload(*, method: str, d_in: int = 3, d_sae: int = 5, k: int = 2):
 def _cold_reference_l2(X_train, y_train, X_test, y_test, *, seed: int):
     from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
+    from sklearn.model_selection import LeavePOut, StratifiedKFold
 
-    train = runner._probe_matrix(X_train)
-    test = runner._probe_matrix(X_test)
+    train = X_train.detach().contiguous().numpy() if torch.is_tensor(X_train) else X_train
+    test = X_test.detach().contiguous().numpy() if torch.is_tensor(X_test) else X_test
     train_labels = np.asarray(y_train)
     test_labels = np.asarray(y_test)
     cs = np.logspace(5, -5, 10)
     scores = []
     for C in cs:
+        if train.shape[0] <= 12:
+            cv = LeavePOut(2)
+        elif train.shape[0] < 128:
+            cv = StratifiedKFold(n_splits=6, shuffle=True, random_state=seed)
+        else:
+            val_size = min(int(0.2 * train.shape[0]), 100)
+            train_size = train.shape[0] - val_size
+            cv = [(list(range(train_size)), list(range(train_size, train.shape[0])))]
+        if hasattr(cv, "split"):
+            splits = [
+                (train_index, val_index)
+                for train_index, val_index in cv.split(train, train_labels)
+                if len(np.unique(train_labels[val_index])) == 2
+            ]
+        else:
+            splits = cv
         fold_scores = []
-        for train_index, val_index in runner._companion_cv_splits(train, train_labels, seed):
+        for train_index, val_index in splits:
             if len(np.unique(train_labels[train_index])) < 2:
                 fold_scores.append(0.5)
                 continue
@@ -179,6 +194,9 @@ def _cold_reference_l2(X_train, y_train, X_test, y_test, *, seed: int):
             "test_auc": float(roc_auc_score(test_labels, probability)),
             "val_auc": float(np.max(scores)),
         },
+        "coef": model.coef_.copy(),
+        "intercept": model.intercept_.copy(),
+        "classes": model.classes_.copy(),
         "decision": model.decision_function(test),
         "prediction": prediction,
     }
@@ -194,7 +212,7 @@ def test_frozen_config_hashes_dataset_family_and_regularization_contracts():
     assert config["benchmark"]["companion_full_code_matrix_format"] == "scipy_csr_exact_values"
     assert (
         config["benchmark"]["companion_l2_path_optimization"]
-        == "parallel_independent_cold_C_loky_cold_selected_C_refit"
+        == "batched_all_representations_independent_cold_C_loky_cold_selected_C_refit"
     )
     assert config["runtime"]["companion_full_code_cold_C_jobs_per_worker"] == 8
     assert config["benchmark"]["saebench_include_llm_baseline"] is False
@@ -266,15 +284,15 @@ def test_launcher_records_environment_and_deployed_sources():
     assert "audit_exp10_artifacts.py" in launcher
 
 
-def test_autonomous_supervisor_requires_schema_v6_cpu_identity():
+def test_autonomous_supervisor_requires_schema_v7_cpu_identity():
     supervisor = (runner.ROOT / "scripts/run_steps1_4_autonomous_runpod.sh").read_text()
 
     assert "dpsae.cpu_quota json" in supervisor
-    assert ".schema_version == 6" in supervisor
+    assert ".schema_version == 7" in supervisor
     assert ".runtime_resources.cgroup_quota_cores" in supervisor
     assert ".runtime_resources.effective_cpu_count" in supervisor
     assert ".runtime_resources.threads_per_worker" in supervisor
-    assert "schema-v6/config/runtime identity checks" in supervisor
+    assert "schema-v7/config/runtime identity checks" in supervisor
 
 
 def test_timing_launcher_self_detaches_into_tmux():
@@ -494,6 +512,164 @@ def test_parallel_cold_C_matches_sequential_reference_best_C_and_outputs(sparse_
         optimized.classifier.predict(test), reference["prediction"]
     )
     assert optimized.classifier.coef_.shape[1] == width
+
+
+def test_batched_cold_C_matches_five_independent_upstream_paths(monkeypatch):
+    from scipy.sparse import csr_matrix
+    import sklearn.linear_model
+
+    rng = np.random.RandomState(47)
+    rows = 260
+    labels = np.tile(np.array([0, 1], dtype=np.int64), rows // 2)
+    rng.shuffle(labels)
+    representations = {
+        "original_residual": rng.normal(size=(rows, 24)).astype(np.float32),
+        "mse.reconstruction": rng.normal(size=(rows, 24)).astype(np.float32),
+        "dpsae.reconstruction": rng.normal(size=(rows, 24)).astype(np.float32),
+    }
+    for method in ("mse", "dpsae"):
+        matrix = np.zeros((rows, 512), dtype=np.float32)
+        for row in range(rows):
+            columns = rng.choice(matrix.shape[1], size=8, replace=False)
+            matrix[row, columns] = rng.normal(size=8)
+        representations[f"{method}.full_code"] = csr_matrix(matrix)
+    train_test = {
+        name: (matrix[:180], matrix[180:]) for name, matrix in representations.items()
+    }
+    references = {
+        name: _cold_reference_l2(
+            train,
+            labels[:180],
+            test,
+            labels[180:],
+            seed=53,
+        )
+        for name, (train, test) in train_test.items()
+    }
+
+    estimator_calls = []
+    original_logistic_regression = sklearn.linear_model.LogisticRegression
+
+    def counted_logistic_regression(*args, **kwargs):
+        estimator_calls.append((args, kwargs))
+        return original_logistic_regression(*args, **kwargs)
+
+    monkeypatch.setattr(
+        sklearn.linear_model,
+        "LogisticRegression",
+        counted_logistic_regression,
+    )
+    optimized = runner.find_best_reg_l2_parallel_cold_C_batch(
+        train_test,
+        labels[:180],
+        labels[180:],
+        seed=53,
+        n_jobs=4,
+        _parallel_backend="threading",
+    )
+
+    assert list(optimized) == list(train_test)
+    assert len(estimator_calls) == 55  # 5 representations x (10 cold candidates + 1 refit)
+    for name, result in optimized.items():
+        reference = references[name]
+        test = train_test[name][1]
+        assert result.classifier.C == reference["C"]
+        for metric, value in reference["metrics"].items():
+            assert runner._metrics_dict(result)[metric] == pytest.approx(value, abs=2e-6, rel=0)
+        np.testing.assert_allclose(result.classifier.coef_, reference["coef"], rtol=0, atol=2e-6)
+        np.testing.assert_allclose(
+            result.classifier.intercept_, reference["intercept"], rtol=0, atol=2e-6
+        )
+        np.testing.assert_array_equal(result.classifier.classes_, reference["classes"])
+        np.testing.assert_allclose(
+            result.classifier.decision_function(test),
+            reference["decision"],
+            rtol=0,
+            atol=2e-6,
+        )
+        np.testing.assert_array_equal(result.classifier.predict(test), reference["prediction"])
+
+
+def test_production_loky_batch_matches_pinned_upstream_when_available(monkeypatch):
+    upstream = pytest.importorskip("sae_probes.utils_training")
+    from scipy.sparse import csr_matrix
+    import joblib.externals.loky.process_executor as loky_process
+
+    original_sysconf = loky_process.os.sysconf
+
+    def sandbox_safe_sysconf(name):
+        if name == "SC_SEM_NSEMS_MAX":
+            return 256
+        return original_sysconf(name)
+
+    monkeypatch.setattr(loky_process.os, "sysconf", sandbox_safe_sysconf)
+    monkeypatch.setattr(loky_process, "_system_limits_checked", False)
+    monkeypatch.setattr(loky_process, "_system_limited", None)
+
+    rng = np.random.RandomState(71)
+    rows = 240
+    labels = np.tile(np.array([0, 1], dtype=np.int64), rows // 2)
+    rng.shuffle(labels)
+    matrices = {
+        "original_residual": rng.normal(size=(rows, 12)).astype(np.float32),
+        "mse.reconstruction": rng.normal(size=(rows, 12)).astype(np.float32),
+        "dpsae.reconstruction": rng.normal(size=(rows, 12)).astype(np.float32),
+    }
+    for method in ("mse", "dpsae"):
+        dense = np.zeros((rows, 128), dtype=np.float32)
+        for row in range(rows):
+            columns = rng.choice(dense.shape[1], size=6, replace=False)
+            dense[row, columns] = rng.normal(size=6)
+        matrices[f"{method}.full_code"] = csr_matrix(dense)
+    train_test = {name: (matrix[:180], matrix[180:]) for name, matrix in matrices.items()}
+    references = {
+        name: upstream.find_best_reg(
+            train,
+            labels[:180],
+            test,
+            labels[180:],
+            seed=83,
+        )
+        for name, (train, test) in train_test.items()
+    }
+    optimized = runner.find_best_reg_l2_parallel_cold_C_batch(
+        train_test,
+        labels[:180],
+        labels[180:],
+        seed=83,
+        n_jobs=8,
+    )
+
+    for name, result in optimized.items():
+        reference = references[name]
+        test = train_test[name][1]
+        assert result.classifier.C == reference.classifier.C
+        assert runner._metrics_dict(result) == pytest.approx(
+            {
+                "test_f1": reference.metrics.test_f1,
+                "test_acc": reference.metrics.test_acc,
+                "test_auc": reference.metrics.test_auc,
+                "val_auc": reference.metrics.val_auc,
+            },
+            abs=2e-6,
+            rel=0,
+        )
+        np.testing.assert_allclose(
+            result.classifier.coef_, reference.classifier.coef_, rtol=0, atol=2e-6
+        )
+        np.testing.assert_allclose(
+            result.classifier.intercept_, reference.classifier.intercept_, rtol=0, atol=2e-6
+        )
+        np.testing.assert_array_equal(result.classifier.classes_, reference.classifier.classes_)
+        np.testing.assert_allclose(
+            result.classifier.decision_function(test),
+            reference.classifier.decision_function(test),
+            rtol=0,
+            atol=2e-6,
+        )
+        np.testing.assert_array_equal(
+            result.classifier.predict(test), reference.classifier.predict(test)
+        )
 
 
 def test_parallel_cold_C_rejects_path_reuse_counterexample(monkeypatch):
