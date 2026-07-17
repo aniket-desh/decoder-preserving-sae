@@ -171,6 +171,61 @@ def scan_artifact_group(
     return {**base, "present": True, "tree": tree, "subroots": subroots}
 
 
+def _validate_run_root_coverage(policy: Mapping[str, Any], run_root: Path) -> None:
+    """Require one non-overlapping run group for every top-level run entry."""
+
+    if run_root.is_symlink() or not run_root.is_dir():
+        raise ValueError(f"run root must be a non-symlink directory: {run_root}")
+    run_root = run_root.resolve()
+
+    claims: list[tuple[str, Path]] = []
+    for spec in policy["artifact_groups"]:
+        if str(spec["anchor"]) != "run":
+            continue
+        group_id = str(spec["id"])
+        path = _resolve_below(run_root, str(spec["path"]), label=f"group {group_id}")
+        claims.append((group_id, path.relative_to(run_root)))
+
+    root_claims = [group_id for group_id, relative in claims if relative == Path(".")]
+    if len(root_claims) > 1 or (root_claims and len(claims) > 1):
+        raise ValueError("overlapping top-level run artifact-group paths")
+    if root_claims:
+        return
+
+    owners: dict[str, str] = {}
+    for group_id, relative in claims:
+        top_level = relative.parts[0]
+        if top_level in owners:
+            raise ValueError(
+                "overlapping top-level run artifact-group paths: "
+                f"{top_level!r} is claimed by more than one group"
+            )
+        owners[top_level] = group_id
+
+    for group_id, relative in claims:
+        if len(relative.parts) != 1:
+            raise ValueError(
+                "run-anchored artifact groups must claim a complete top-level entry: "
+                f"{group_id!r} uses {relative.as_posix()!r}"
+            )
+
+    unexpected = sorted(entry.name for entry in run_root.iterdir() if entry.name not in owners)
+    if unexpected:
+        raise ValueError(f"unexpected top-level run-root entries: {unexpected}")
+
+
+def _scan_artifact_groups(
+    policy: Mapping[str, Any], *, repository_root: Path, run_root: Path
+) -> list[dict[str, Any]]:
+    _validate_run_root_coverage(policy, run_root)
+    return [
+        scan_artifact_group(
+            spec, repository_root=repository_root, run_root=run_root
+        )
+        for spec in policy["artifact_groups"]
+    ]
+
+
 def _source_records(policy: Mapping[str, Any], repository_root: Path) -> list[dict[str, Any]]:
     records = []
     seen: set[str] = set()
@@ -249,12 +304,9 @@ def build_manifest(
         raise RuntimeError("release freeze requires a clean repository worktree")
     policy_record = file_record(policy_path, repository_root)
     sources = _source_records(policy, repository_root)
-    groups = [
-        scan_artifact_group(
-            spec, repository_root=repository_root, run_root=run_root
-        )
-        for spec in policy["artifact_groups"]
-    ]
+    groups = _scan_artifact_groups(
+        policy, repository_root=repository_root, run_root=run_root
+    )
     manifest: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "release": RELEASE_NAME,
@@ -297,6 +349,9 @@ def audit_manifest(
     run_root = run_root.resolve()
     policy_path = policy_path.resolve()
     policy = load_policy(policy_path)
+    repository = repository_record(repository_root)
+    if manifest.get("repository") != repository:
+        raise ValueError("release repository identity changed after manifest creation")
     if manifest.get("policy") != file_record(policy_path, repository_root):
         raise ValueError("release policy changed after manifest creation")
     sources = _source_records(policy, repository_root)
@@ -304,12 +359,9 @@ def audit_manifest(
         raise ValueError("release source set changed after manifest creation")
     if manifest.get("source_set_sha256") != canonical_digest(sources):
         raise ValueError("release source-set digest mismatch")
-    groups = [
-        scan_artifact_group(
-            spec, repository_root=repository_root, run_root=run_root
-        )
-        for spec in policy["artifact_groups"]
-    ]
+    groups = _scan_artifact_groups(
+        policy, repository_root=repository_root, run_root=run_root
+    )
     if manifest.get("artifact_groups") != groups:
         raise ValueError("release artifact set changed after manifest creation")
     if manifest.get("artifact_set_sha256") != canonical_digest(groups):

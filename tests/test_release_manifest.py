@@ -131,6 +131,104 @@ def test_audit_rejects_changed_added_and_removed_artifacts(tmp_path, monkeypatch
             run_root=run,
         )
 
+    (run / "control/extra.json").unlink()
+    (run / "unclaimed").mkdir()
+    with pytest.raises(ValueError, match="unexpected top-level run-root entries"):
+        release.audit_manifest(
+            manifest,
+            policy_path=policy,
+            repository_root=repository,
+            run_root=run,
+        )
+
+
+def test_audit_rejects_repository_identity_drift(tmp_path, monkeypatch):
+    repository, run, policy = _policy(tmp_path)
+    identity = {"revision": "abc123", "dirty": False, "status": []}
+    monkeypatch.setattr(release, "repository_record", lambda _root: identity)
+    manifest = release.build_manifest(
+        policy_path=policy, repository_root=repository, run_root=run
+    )
+
+    identity = {
+        "revision": "def456",
+        "dirty": True,
+        "status": [" M unrelated.py"],
+    }
+    with pytest.raises(ValueError, match="repository identity changed"):
+        release.audit_manifest(
+            manifest,
+            policy_path=policy,
+            repository_root=repository,
+            run_root=run,
+        )
+
+
+@pytest.mark.parametrize("entry_kind", ("file", "directory"))
+def test_manifest_rejects_unclaimed_top_level_run_entries(
+    tmp_path, monkeypatch, entry_kind
+):
+    repository, run, policy = _policy(tmp_path)
+    monkeypatch.setattr(
+        release,
+        "repository_record",
+        lambda _root: {"revision": "abc123", "dirty": False, "status": []},
+    )
+    unexpected = run / "unexpected"
+    if entry_kind == "file":
+        unexpected.write_text("not covered\n")
+    else:
+        unexpected.mkdir()
+
+    with pytest.raises(ValueError, match="unexpected top-level run-root entries"):
+        release.build_manifest(
+            policy_path=policy, repository_root=repository, run_root=run
+        )
+
+
+def test_manifest_rejects_overlapping_top_level_run_group_paths(tmp_path, monkeypatch):
+    repository, run, policy = _policy(tmp_path)
+    monkeypatch.setattr(
+        release,
+        "repository_record",
+        lambda _root: {"revision": "abc123", "dirty": False, "status": []},
+    )
+    loaded = json.loads(policy.read_text())
+    loaded["artifact_groups"].append(
+        {
+            "id": "failed-attempt",
+            "anchor": "run",
+            "path": "attempts/failed-v1",
+            "required": True,
+            "kind": "tree",
+            "purpose": "overlapping nested attempt",
+        }
+    )
+    policy.write_text(json.dumps(loaded))
+
+    with pytest.raises(ValueError, match="overlapping top-level run artifact-group paths"):
+        release.build_manifest(
+            policy_path=policy, repository_root=repository, run_root=run
+        )
+
+
+def test_run_groups_must_claim_the_complete_top_level_entry(tmp_path, monkeypatch):
+    repository, run, policy = _policy(tmp_path)
+    monkeypatch.setattr(
+        release,
+        "repository_record",
+        lambda _root: {"revision": "abc123", "dirty": False, "status": []},
+    )
+    loaded = json.loads(policy.read_text())
+    attempts = next(group for group in loaded["artifact_groups"] if group["id"] == "attempts")
+    attempts["path"] = "attempts/failed-v1"
+    policy.write_text(json.dumps(loaded))
+
+    with pytest.raises(ValueError, match="must claim a complete top-level entry"):
+        release.build_manifest(
+            policy_path=policy, repository_root=repository, run_root=run
+        )
+
 
 def test_required_roots_links_and_partial_files_fail_closed(tmp_path, monkeypatch):
     repository, run, policy = _policy(tmp_path)

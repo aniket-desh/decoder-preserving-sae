@@ -1,6 +1,6 @@
 # Experiment plan
 
-**Status:** canonical execution contract for the remaining arXiv experiments and the subsequent main-track hardening pass, updated July 16, 2026.
+**Status:** canonical execution contract and outcome ledger for the arXiv experiments and the subsequent main-track hardening pass, updated July 17, 2026.
 
 This document records the decisions, gates, costs, and execution order that must stay fixed while the remaining experiments run. `docs/experiments_todo.md` remains the theory-to-evidence map and `docs/theory_todo.md` remains the theorem-order checklist, but this file is the operational reference for concept discovery, automated feature descriptions, frozen-network confirmation, evidence scaling, and RunPod execution.
 
@@ -44,6 +44,8 @@ The single-seed GPT-2 block-4 screen passes its decoder-distortion gate, while t
 The completed frozen-network diagnostic uses the three clean GPT-2 checkpoint pairs on the once-opened 195M--200M FineWeb range. It measures output KL, next-token loss recovered, cross-entropy increase, top-1 agreement, next-token accuracy, same-split NMSE, and inference $L_0$. DPSAE has lower point-estimate output KL in all three seeds, with intervals excluding zero for seeds 1 and 2, but the run did not predeclare a primary metric, noninferiority margin, or task-level endpoint. It is review-only and may inform sample size, not confirmatory inference.
 
 The matched-NMSE static spectral protocol is now frozen in `configs/exp11_static_matched_nmse.json`. Its one-seed, 25M-token screen compares spectral coefficients $\beta\in\{2,4,8,16,32\}$ against freshly co-trained MSE and $\gamma=0.25$ DPSAE anchors, targets an NMSE ratio of $1.07\pm0.01$, and breaks equally close matches toward the smaller coefficient. It advances to three paired 100M-token seeds only if the selected spectral point's decoder reduction is within two percentage points of the co-trained DPSAE anchor. The archived $\gamma=0.03125$ fleet is hash-checked for provenance but is not mislabeled as the high-weight comparison.
+
+The final Exp11 screen found no matching spectral candidate, so its three-seed confirmation was not run. The five spectral NMSE ratios ranged from `0.8952` to `0.9061`, outside the frozen `[1.06, 1.08]` operating-quality band, while their decoder reductions ranged from `0.1557` to `0.1840`; the co-trained $\gamma=0.25$ DPSAE anchor had NMSE ratio `1.0285` and decoder reduction `0.3251`. This is a failed operating-point match, not an outcome comparison at matched NMSE. The paper must report the screen and avoid claiming that the dynamic objective beat a successfully matched static spectral baseline.
 
 ## 3. Evaluation hierarchy
 
@@ -147,9 +149,11 @@ A pilot that does not advance closes the standard-concept question as a clean nu
 
 ### 4.6 Training maturity and fresh confirmation
 
-The 25M-token pair is adequate for screening but is not automatically adequate for a paper-facing concept claim. If the pilot advances, train three fresh paired Pythia seeds at a common, concept-blind maturity budget. Save checkpoints at 25M, 50M, 100M, 250M, and, if supported by genuinely fresh activation streaming, 500M tokens.
+The 25M-token pair is adequate for screening but is not automatically adequate for a paper-facing concept claim. If the pilot advances, train three fresh paired Pythia seeds at a common, concept-blind maturity budget. The current confirmation freezes a 250M-token maximum with no training-cache reuse and saves optimizer-bearing checkpoints at 25M, 50M, 100M, and 250M. A 500M run is a separate future extension that requires a new outcome-independent protocol and at least 500M genuinely fresh tokens.
 
-Before training, freeze a common final checkpoint rule based only on held-out natural-text NMSE, exact decoder distortion, $L_0$, dead-feature rate, and whether those training diagnostics have plateaued. Do not use concept scores or automated labels to choose the training duration. Do not create a nominal 500M-token run by cycling a small activation cache enough times to overfit it; record unique corpus exposure and cache reuse separately.
+Before training, freeze a common final checkpoint rule based only on held-out natural-text NMSE, exact decoder distortion, $L_0$, dead-feature rate, and whether those training diagnostics have plateaued. Matched quality requires both methods to keep dead-feature fraction at or below 1%; this is deliberately generous relative to the pilot's essentially zero dead-feature rate while still rejecting a qualitatively collapsed dictionary. Relative dead-feature change uses one dictionary atom as its denominator floor, so a zero-to-one-feature transition is measured as 100% rather than divided by a floating-point epsilon. If no common plateau passes by 250M tokens, the confirmation fails without selecting a checkpoint merely because its final operating metrics match. Do not use concept scores or automated labels to choose the training duration, and record unique corpus exposure and cache reuse separately.
+
+Before preparing the full confirmation corpus, GPU 3 runs a separate 2M-token matched-pair timing smoke with nonreport seed `2027071899` on a disjoint token range. The smoke retains only cache, setup, training-wall-time, and peak-memory measurements; it does not retain checkpoints or model-quality outcomes and cannot enter any paper aggregate. Scale the measured cache and pair-training times to the frozen 250M run, add 30% headroom, and proceed only if projected confirmation time is at most 7.25 hours and peak reserved memory is at most 44 GiB. The smoke itself has a 45-minute limit, and one external timeout encloses smoke plus confirmation so the four-A40 pod cannot exceed eight hours for this stage.
 
 The existing pilot pair is excluded from confirmation. The confirmatory claim requires:
 
@@ -160,11 +164,21 @@ The existing pilot pair is excluded from confirmation. The confirmatory claim re
 - Holm correction across predeclared concept families;
 - individual concepts treated as descriptive or controlled with a declared FDR procedure.
 
+The global pooled family-block confidence interval is gate-forming. Family-specific one-sided $p$-values use a centered, paired, family-stratified held-out-example bootstrap and receive Holm adjustment for reporting only; neither family significance nor individual-concept significance is a confirmation gate, and individual concepts remain descriptive. This inference contract is frozen in the pre-concept authorization artifact before any confirmation outcome is opened.
+
 The trained checkpoint pair is the replication unit for method generality; probe examples and probe reseeds are not additional SAE-training replicates.
 
 Every fresh Pythia pair must also receive the paper's exact decoder-distortion evaluation and the frozen-network natural-text evaluation. This converts a successful Pythia confirmation into a genuine second-model replication of the central phenomenon rather than a concept-only side experiment.
 
-### 4.7 Optional sparsity bracket
+### 4.7 Final pilot outcome and downstream routing
+
+The finalized schema-v7 pilot passed its checkpoint-eligibility and artifact-integrity audits. The same evaluation split gave a DPSAE/MSE NMSE ratio of `1.0030949`, relative $L_0$ errors of `0.0011673` and `0.0014400`, and a paired relative $L_0$ difference of `0.0002728`, so the concept result is scientifically eligible rather than a mismatched-quality diagnostic.
+
+The predeclared $k=5$ primary was negative. Across 60 frozen concept families, the family-macro DPSAE-minus-MSE AUROC difference was `-0.0038654`, with a 95% family-block bootstrap interval of `[-0.0069102, -0.0011499]`. All ten probe-seed macro differences were negative, ranging from `-0.0066434` to `-0.0008927`, and the probe-reseed standard error was `0.0006663`. Twenty-nine families had positive mean differences, so the multiple-positive-family check passed, but the point-effect, positive-lower-bound, and probe-reseed-stability checks failed.
+
+The frozen advancement decision is therefore `advance_fresh_confirmation=false` and `advance_autointerp=false`. The three-pair Exp12 training fleet, Exp13 concept confirmation, context mining, and GPT labeling were not run. The pilot retains 1,020 exploratory feature associations for auditability, but its candidate manifest sets `autointerp_eligible=false`; API spend is exactly `$0`. This closes the standard-concept extension as a clean single-checkpoint null under the frozen rule. It does not overturn the separate exact-decoder and frozen-network results, and it cannot establish a population-average concept disadvantage from one trained SAE pair.
+
+### 4.8 Optional sparsity bracket
 
 The confirmatory setting remains width 16,384 and $L_0=32$. For main-track robustness, one paired seed may bracket it at target $L_0\in\{16,64\}$ using selection rules frozen before training. These are operating-point sensitivity checks, not a new scaling-law claim, and they do not replace the three $L_0=32$ seed pairs.
 
@@ -239,6 +253,8 @@ The intended plan is 300--600 unique replicated candidates with resampling only 
 
 Generate and archive feature contexts on GPU, terminate the GPU pod, then submit asynchronous Batch API jobs from local or CPU compute. Do not pay for idle GPUs during the API's turnaround window.
 
+Batch preparation writes a hash-bound spend ledger before submission. The ledger reserves the frozen maximum for primary labels, nano cleanup, held-out evaluation, and hard-case adjudication together; submission, polling, download, and finalization all fail closed if the aggregate worst-case total exceeds $10 or any reservation, manifest, request, mapping, or config identity drifts. `scripts/poll_exp10_autointerp_batch.py` may then run unattended outside the GPU pod: it resumes an existing submitted Batch ID without resubmitting, persists every remote status, accepts only a completed zero-failure request count, downloads through the Files API, validates every custom ID and structured label before atomically promoting the JSONL, records token-derived primary spend, and reuses a hash-verified local result after interruption.
+
 Pricing references checked July 16, 2026:
 
 - https://developers.openai.com/api/docs/models/gpt-5.4-mini
@@ -311,6 +327,12 @@ Use a paired prompt-level bootstrap. This is a full-reconstruction compatibility
 - If intervals also favor DPSAE, report frozen-network superiority as a secondary empirical result without claiming the refittable-readout objective directly optimized it.
 - If any pair fails, report the trade-off honestly: the objective improves refittable readouts but is not confirmed compatible with the frozen downstream computation at the declared margin.
 - Mixed task-level outcomes remain mixed; do not replace the natural-text primary with a favorable task result.
+
+### 6.6 Final confirmatory outcome
+
+The fresh 200M--210M FineWeb evaluation completed and passed the identity-hook and artifact checks. The seedwise DPSAE/MSE output-KL ratios were `0.9904588` with 95% CI `[0.9879579, 0.9929433]`, `0.9743527` with `[0.9720218, 0.9768079]`, and `0.9777266` with `[0.9755448, 0.9800107]`. Every upper endpoint is below the frozen `1.01` noninferiority margin, so the confirmatory natural-text gate passes in all three trained pairs. All three intervals are also below `1.0`, which supports the secondary observation that DPSAE produced lower frozen-network output divergence on this sample; the paper must still present noninferiority as the predeclared primary claim.
+
+The corresponding activation-NMSE ratios were `0.9974635`, `0.9967060`, and `0.9987555`, and the paired inference-$L_0$ differences were `0.0082`, `0.0010`, and `-0.0106` activations. These controls rule out a reconstruction-quality or sparsity mismatch as the explanation for the KL result. The retained IOI endpoint remains secondary and must be reported on its own estimand rather than used to restate the natural-text gate.
 
 ## 7. Evidence scale for arXiv and main-track review
 
@@ -402,6 +424,8 @@ All four workers open the completed activation cache read-only and reuse one cac
 | 2 | Fresh seed-2 MSE/DPSAE pair |
 | 3 | Checkpoint evaluation, optional sparsity bracket, or completed-stage artifact validation |
 
+GPU 3 first performs the nonreport 2M-token timing/memory smoke. GPUs 0--2 remain in their tmux wait stages until its retained gate passes and the coordinator publishes the shared-input manifest, so a failed projection cannot trigger full corpus preparation or report-seed training.
+
 Keep each MSE/DPSAE seed pair on the same GPU and in the same paired training process so it shares initialization rules, activation stream, minibatch order, and logging. Parallelize across seed pairs, not within a pair. With only three A40s, run the three seed pairs concurrently and evaluate checkpoints as GPUs finish.
 
 **Labeling wave**
@@ -418,6 +442,8 @@ Suggested session names are `dpsae-concept-timing`, `dpsae-concept-pilot`, `dpsa
 
 One GPU process failing must not corrupt shared state or stop independent stages. Each stage records `running`, `complete`, or `failed` status atomically; `complete` requires artifact validation, not process exit alone. Resume commands must be idempotent and must verify config, code, input, and checkpoint hashes before reusing partial outputs.
 
+The fresh Pythia fleet additionally retains pair and coordinator failure sentinels, asks every live worker to abort when any paired process fails, and enforces an eight-hour wall-clock ceiling in both the Python coordinator and an external process timeout. Maturity snapshots are written to run-owned partial directories and atomically promoted only after all optimizer, model, metric, and manifest records are complete, so an interrupted write can be discarded and rebuilt without exposing a partial checkpoint as final.
+
 Do not overwrite an opened confirmatory artifact. A corrected run receives a new run ID and records why the prior artifact was invalid.
 
 ## 9. Cost envelope
@@ -430,7 +456,7 @@ RunPod prices are time-sensitive; the deploy console is authoritative. The activ
 | 3x A40 | $1.35 | $16.20 | $32.40 |
 | 4x A40 | $1.80 | $21.60 | $43.20 |
 
-Earlier estimates assumed a 25M-token concept confirmation and put the concept pilot at 6--12 A40 GPU-hours, fresh confirmation at another 6--12 GPU-hours, and frozen-network confirmation at 2--4 GPU-hours. The maturity plan can extend Pythia training to 100M--500M tokens, so those confirmation numbers are now lower bounds. Reserve 30--60 A40 GPU-hours for a mature three-pair Pythia confirmation until a short timing benchmark gives a better estimate.
+Earlier estimates assumed a 25M-token concept confirmation and put the concept pilot at 6--12 A40 GPU-hours, fresh confirmation at another 6--12 GPU-hours, and frozen-network confirmation at 2--4 GPU-hours. The current fresh confirmation stops at 250M tokens and has one eight-hour fleet ceiling covering its nonreport smoke and all report work, bounding this stage at 32 allocated A40 GPU-hours or $14.40 on the active pod. The full run is admitted only when the 2M-token smoke projects at most 7.25 additional hours after 30% headroom, reserving the first 45 minutes of the same budget for the smoke itself.
 
 The concept pilot now has a stricter empirical spend gate: the blind smoke must project at most three hours on the active four-A40 pod after 30% headroom, corresponding to at most $5.40 for the projected fleet workload at $1.80 per pod-hour, plus the one-GPU smoke and any cache-preparation time not already included in its measured cache term. This replaces the earlier 6--12 GPU-hour guess once the smoke artifact exists; it does not authorize an expanded benchmark.
 
@@ -439,6 +465,8 @@ A practical arXiv planning envelope is 50--100 total A40 GPU-hours, or $22.50--$
 A 200GB network volume costs approximately $14 per month at the checked $0.07/GB-month rate. Do not leave stopped local Pod volumes accumulating higher charges; upload versioned checkpoints and bulky results, verify the backup, and delete the Pod when the run is complete.
 
 The targeted GPT-5.4 labeling plan should remain below $10. A one-month 200GB volume, 24 hours on the active four-A40 allocation, and the labeling envelope total $67.20 before retry allowance. The optional modern-model main-track replication is outside this arXiv envelope and must receive a 2M-token timing/memory benchmark before its own budget is frozen.
+
+The completed concept gate did not authorize labeling, so final OpenAI API spend is `$0`. The release freeze writes `control/cost_accounting.json` from the earliest retained setup timestamp through the final pod-side ledger timestamp at the active `$1.80` hourly rate. That value is explicitly a lower bound because it excludes any allocation time before the first retained record, network-volume storage, taxes, and provider-side billing adjustments; the RunPod console remains the billing authority.
 
 Pricing references checked July 16, 2026:
 
@@ -592,3 +620,7 @@ Now frozen in the experiment configs before opening outcomes:
 **July 16, 2026, unattended approval boundary.** The pod-resident supervisor may finish the blind timing gate, wait for the matched-NMSE control to release GPU 3, launch the four frozen concept workers, run the mandatory pre-aggregation and final integrity audits, and record the concept advancement decision without a live SSH connection. It must stop after that decision: fresh confirmation, any OpenAI API call, the cross-experiment release audit, and Hugging Face backup require renewed user approval. A four-hour ceiling bounds the concept fleet after launch; exceeding it records a failure instead of silently continuing an unexpectedly expensive run.
 
 **July 16, 2026, renewed unattended completion approval.** The user subsequently authorized continuing through every predeclared advancement gate while they are offline, including any gated fresh confirmation, GPT feature labeling within the funded API budget, cross-experiment release audit, checkpoint verification, and Hugging Face backup. This authorization does not loosen scientific, privacy, integrity, or spend gates: operational bugs may be fixed without opening sealed outcomes or changing frozen tasks, seeds, splits, estimators, endpoints, or decision rules, and the manuscript prose remains unchanged until the user reviews the completed evidence.
+
+**July 17, 2026, final closure outcomes.** Exp09 passed its predeclared frozen-network natural-text noninferiority gate in all three trained pairs: DPSAE/MSE output-KL ratios were `0.9904588`, `0.9743527`, and `0.9777266`, and every seedwise 95% interval lay below the `1.01` margin. The fully audited Exp10 concept pilot was operating-point eligible but failed advancement: the family-macro DPSAE-minus-MSE $k=5$ AUROC difference was `-0.0038654` with 95% family-block interval `[-0.0069102, -0.0011499]`, and all ten probe-seed macro differences were negative. The gate therefore skipped fresh Pythia training, confirmatory concept evaluation, context mining, and GPT labeling; the API bill is `$0`. Exp11 found no static spectral candidate in the frozen matched-NMSE band, so its three-seed confirmation was also skipped. These are terminal scientific gate decisions, not missing runs, and all null-path artifacts remain in the release inventory.
+
+**July 17, 2026, immutable release route.** The final closure release uses a result-blind, hash-complete core manifest over every retained experiment, failed attempt, control decision, monitor snapshot, preflight record, and setup log. Only after that manifest re-audits does a separate hash-bound builder parse the authoritative Exp09, Exp10, and Exp11 outcomes into the publication payload, summary CSV, and D-DIN plot inputs outside the frozen run tree. Conditional Exp12, Exp13, and autointerp roots must be absent on this null path. The private Hub backup is staged from the audited tree with the core manifest, payload provenance, rendered figures, and an exact source bundle; upload verification is a separate external-state check and cannot alter the scientific release.

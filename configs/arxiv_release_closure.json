@@ -35,6 +35,14 @@
       "purpose": "Optional confirmation fleet, present only if its gate and approval were exercised"
     },
     {
+      "id": "exp13_concept_confirmation",
+      "anchor": "run",
+      "path": "exp13_concept_confirmation",
+      "required": false,
+      "kind": "tree",
+      "purpose": "Optional fresh concept-confirmation fleet, present only if the pilot gate and approval were exercised"
+    },
+    {
       "id": "exp10_autointerp",
       "anchor": "run",
       "path": "exp10_autointerp",
@@ -59,12 +67,20 @@
       "purpose": "Hardware, storage, tmux, OOM, and alert telemetry"
     },
     {
-      "id": "release_plot_inputs",
+      "id": "closure_preflight",
       "anchor": "run",
-      "path": "release_plot_inputs",
-      "required": false,
+      "path": "preflight",
+      "required": true,
       "kind": "tree",
-      "purpose": "Post-audit, result-bearing plot and table payloads curated from authoritative roots"
+      "purpose": "Dependency, model-cache, authentication, and environment preflight records"
+    },
+    {
+      "id": "closure_setup_logs",
+      "anchor": "run",
+      "path": "logs",
+      "required": true,
+      "kind": "tree",
+      "purpose": "Retained setup and orchestration logs"
     }
   ],
   "source_files": [
@@ -73,11 +89,15 @@
     {"path": "configs/exp10_concept_discovery.json", "required": true},
     {"path": "configs/exp11_static_matched_nmse.json", "required": true},
     {"path": "configs/exp12_pythia_fresh_confirmation.json", "required": false},
+    {"path": "configs/exp13_concept_confirmation.json", "required": false},
+    {"path": "docs/exp13_concept_confirmation.md", "required": false},
     {"path": "experiments/exp09_frozen_network.py", "required": true},
     {"path": "experiments/exp10_concept_discovery.py", "required": true},
     {"path": "experiments/exp10_context_mining.py", "required": true},
     {"path": "experiments/exp11_static_matched_nmse.py", "required": true},
     {"path": "experiments/exp12_pythia_fresh_confirmation.py", "required": false},
+    {"path": "experiments/exp13_concept_confirmation.py", "required": false},
+    {"path": "scripts/audit_exp13_concept_confirmation.py", "required": false},
     {"path": "scripts/audit_exp10_artifacts.py", "required": true},
     {"path": "scripts/run_exp09_frozen_network_runpod.sh", "required": true},
     {"path": "scripts/run_exp10_concept_4xa40.sh", "required": true},
@@ -85,13 +105,19 @@
     {"path": "scripts/run_steps1_4_autonomous_runpod.sh", "required": true},
     {"path": "scripts/run_exp11_static_matched_nmse_runpod.sh", "required": true},
     {"path": "scripts/run_exp12_pythia_confirmation_4xa40.sh", "required": false},
+    {"path": "scripts/run_exp13_concept_confirmation_4xa40.sh", "required": false},
     {"path": "scripts/prepare_exp10_autointerp_batch.py", "required": true},
     {"path": "scripts/submit_exp10_autointerp_batch.py", "required": true},
     {"path": "scripts/finalize_exp10_autointerp_batch.py", "required": true},
+    {"path": "scripts/poll_exp10_autointerp_batch.py", "required": true},
     {"path": "scripts/watch_arxiv_closure_hardware.sh", "required": true},
     {"path": "scripts/finalize_arxiv_experiment_closure.py", "required": true},
     {"path": "scripts/render_arxiv_closure_figures.py", "required": true},
+    {"path": "scripts/build_arxiv_closure_payload.py", "required": true},
+    {"path": "scripts/record_arxiv_closure_cost.py", "required": true},
+    {"path": "docs/experiment_plan.md", "required": true},
     {"path": "src/dpsae/exp10_autointerp.py", "required": true},
+    {"path": "src/dpsae/exp10_statistics.py", "required": true},
     {"path": "src/dpsae/exp11_static.py", "required": true},
     {"path": "src/dpsae/cpu_quota.py", "required": true},
     {"path": "src/dpsae/saebench_adapter.py", "required": true},
