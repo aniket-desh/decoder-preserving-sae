@@ -2,6 +2,18 @@
   "schema_version": 1,
   "experiment_id": "exp10_concept_discovery",
   "scope": "conditional_pythia_sparse_probe_and_autointerp",
+  "provenance": {
+    "source_files": [
+      "configs/exp10_concept_discovery.json",
+      "experiments/exp10_concept_discovery.py",
+      "src/dpsae/saebench_adapter.py",
+      "src/dpsae/cpu_quota.py",
+      "scripts/audit_exp10_artifacts.py",
+      "scripts/run_exp10_concept_4xa40.sh",
+      "scripts/run_exp10_timing_smoke_a40.sh",
+      "scripts/run_steps1_4_autonomous_runpod.sh"
+    ]
+  },
   "model": {
     "huggingface_name": "EleutherAI/pythia-160m-deduped",
     "transformer_lens_name": "pythia-160m-deduped",
@@ -498,7 +510,12 @@
   },
   "runtime": {
     "worker_count": 4,
-    "thread_quota_policy": "floor_visible_cpu_count_divided_by_worker_count",
+    "thread_quota_policy": "floor_effective_cpu_count_divided_by_worker_count",
+    "resource_identity": {
+      "cgroup_quota_cores": 32.3,
+      "effective_cpu_count": 32,
+      "threads_per_worker": 8
+    },
     "sparse_worker_shards": [
       {
         "method": "mse",
@@ -562,11 +579,16 @@
       ]
     ],
     "cache_adapters_once_per_worker": true,
-    "companion_full_code_cold_C_jobs_per_worker": 10,
+    "companion_full_code_cold_C_jobs_per_worker": 8,
     "cold_cache_timing_source_policy": "in_process_monotonic_or_hash_bound_external_provenance",
     "timing_smoke": {
       "probe_seed": 2027071799,
       "task_count": 8,
+      "topology_mode": "four_worker_same_tasks",
+      "measured_worker_count": 4,
+      "same_task_set_per_worker": true,
+      "barrier_timeout_seconds": 1800,
+      "maximum_start_skew_seconds": 5.0,
       "quartile_count": 4,
       "tasks_per_quartile": 2,
       "selection": "sort_by_dataset_size_then_frozen_manifest_order_split_into_four_contiguous_quartiles_choose_one_third_and_two_thirds_positions",

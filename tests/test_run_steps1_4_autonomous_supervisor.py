@@ -31,10 +31,14 @@ def test_autonomous_supervisor_preserves_fail_closed_contracts() -> None:
     assert "for gpu_index in 0 1 2 3" in source
     assert 'gpu_blockers+=("GPU${gpu_index}=${gpu_memory}MiB")' in source
 
-    assert ".schema_version == 5" in source
+    assert ".schema_version == 6" in source
     assert ".config_digest == $config_digest" in source
     assert ".probe_seed == $probe_seed" in source
     assert ".task_count == $task_count" in source
+    assert ".measured_worker_count == $measured_workers" in source
+    assert ".topology.mode == $timing_topology" in source
+    assert ".barrier.synchronized == true" in source
+    assert '.projection.aggregation == "slowest_measured_worker"' in source
     assert ".companion_l2_path_optimization == $l2_optimization" in source
     assert ".companion_full_code_cold_C_jobs_per_worker == $cold_c_jobs" in source
     assert ".passed == (.projection.projected_pod_hours <= $maximum_pod_hours)" in source

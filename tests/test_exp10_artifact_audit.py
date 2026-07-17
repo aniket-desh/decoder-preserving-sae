@@ -57,6 +57,23 @@ def _classifier(width: int) -> dict[str, Any]:
     }
 
 
+def _runtime_resources(*, worker_count: int = 2) -> dict[str, Any]:
+    return {
+        "visible_cpu_count": 128,
+        "cgroup_quota_cores": 16.3,
+        "effective_cpu_count": 16,
+        "worker_count": worker_count,
+        "threads_per_worker": 8,
+        "environment": {
+            "LOKY_MAX_CPU_COUNT": "16",
+            "OMP_NUM_THREADS": "8",
+            "MKL_NUM_THREADS": "8",
+            "OPENBLAS_NUM_THREADS": "8",
+            "NUMEXPR_NUM_THREADS": "8",
+        },
+    }
+
+
 def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
     output = tmp_path / "run"
     config_path = tmp_path / "config.json"
@@ -83,15 +100,24 @@ def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
         "statistics": {"primary_k": 2},
         "runtime": {
             "worker_count": 2,
+            "resource_identity": {
+                "cgroup_quota_cores": 16.3,
+                "effective_cpu_count": 16,
+                "threads_per_worker": 8,
+            },
             "sparse_worker_shards": [
                 {"method": "mse", "probe_seeds": seeds},
                 {"method": "dpsae", "probe_seeds": seeds},
             ],
             "companion_seed_shards": [seeds, []],
-            "companion_full_code_cold_C_jobs_per_worker": 10,
+            "companion_full_code_cold_C_jobs_per_worker": 8,
             "timing_smoke": {
                 "probe_seed": 99,
-                "task_count": 1,
+                "task_count": 8,
+                "topology_mode": "four_worker_same_tasks",
+                "measured_worker_count": 4,
+                "same_task_set_per_worker": True,
+                "maximum_start_skew_seconds": 5.0,
                 "require_passed_report_before_workers": True,
             },
         },
@@ -136,20 +162,192 @@ def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
         },
     )
     _json(
+        output / "cpu_budget.json",
+        {
+            key: value
+            for key, value in _runtime_resources().items()
+            if key != "environment"
+        },
+    )
+    topology = AUDIT._timing_topology(config)
+    cpu_budget_hash = AUDIT.file_sha256(output / "cpu_budget.json")
+    cache_ready_hash = AUDIT.file_sha256(output / "cache_ready.json")
+    slots = [
+        {"slot": f"quartile_{index // 2}_sample_{index % 2}", "quartile": index // 2}
+        for index in range(8)
+    ]
+    common_identity = {
+        "config_digest": digest,
+        "artifact_hashes": artifact_hashes,
+        "source_hashes_sha256": "4" * 64,
+        "dependency_environment_sha256": "5" * 64,
+        "cache_ready_sha256": cache_ready_hash,
+        "cache_file_hashes_sha256": "6" * 64,
+        "selection_manifest_sha256": "7" * 64,
+        "selected_opaque_slots": slots,
+        "runtime_resources": _runtime_resources(),
+        "cpu_budget_sha256": cpu_budget_hash,
+        "cache_generation_timing": {
+            "source": "in_process_monotonic",
+            "generation_seconds": 1.0,
+        },
+        "topology": topology,
+    }
+    ready_refs = []
+    ready_values = []
+    for index in range(4):
+        ready = {
+            "schema_version": 1,
+            "complete": True,
+            "worker_index": index,
+            **common_identity,
+            "initialization_seconds": 2.0 + index,
+            "ready_monotonic_seconds": 9.0,
+        }
+        ready_path = output / f"timing_barrier/ready_{index}.json"
+        _json(ready_path, ready)
+        ready_values.append(ready)
+        ready_refs.append(
+            {
+                "worker_index": index,
+                "path": f"timing_barrier/ready_{index}.json",
+                "sha256": AUDIT.file_sha256(ready_path),
+            }
+        )
+    start = {
+        "schema_version": 1,
+        "complete": True,
+        "topology": "four_worker_same_tasks",
+        "worker_count": 4,
+        "common_identity_sha256": AUDIT.canonical_digest(common_identity),
+        "start_monotonic_seconds": 10.0,
+        "start_unix_seconds": 1000.0,
+        "ready_reports": ready_refs,
+    }
+    start_path = output / "timing_barrier/start.json"
+    _json(start_path, start)
+    start_hash = AUDIT.file_sha256(start_path)
+    cpu_delta = {
+        "path": "/sys/fs/cgroup/cpu.stat",
+        "before": {"nr_periods": 10, "nr_throttled": 1, "throttled_usec": 100},
+        "after": {"nr_periods": 20, "nr_throttled": 3, "throttled_usec": 250},
+        "delta": {"nr_periods": 10, "nr_throttled": 2, "throttled_usec": 150},
+    }
+    timing_rows = [
+        {
+            "slot": slot["slot"],
+            "quartile": slot["quartile"],
+            "n_train": 1024,
+            "n_test": 100,
+            "stage_seconds": {
+                "sparse_method_0": {"total": 1.0},
+                "sparse_method_1": {"total": 2.0},
+                "companion": {"total": 3.0},
+            },
+            "total_seconds": 6.0,
+            "peak_rss_mib": 100.0,
+            "peak_gpu_allocated_bytes": 1000,
+            "peak_gpu_reserved_bytes": 2000,
+        }
+        for slot in slots
+    ]
+    timing_workers = []
+    timing_worker_refs = []
+    timing_exit_refs = []
+    for index, ready in enumerate(ready_values):
+        worker = {
+            **ready,
+            "barrier_start_sha256": start_hash,
+            "barrier_start_monotonic_seconds": 10.0,
+            "measurement_started_monotonic_seconds": 10.1 + 0.1 * index,
+            "measurement_finished_monotonic_seconds": 20.1 + 0.1 * index,
+            "measurement_seconds": 10.0,
+            "task_count": 8,
+            "names_and_concept_results_suppressed": True,
+            "saved_concept_metric_count": 0,
+            "cgroup_cpu_stat_delta": cpu_delta,
+            "tasks": timing_rows,
+        }
+        worker_path = output / f"timing_workers/worker_{index}.json"
+        _json(worker_path, worker)
+        worker_hash = AUDIT.file_sha256(worker_path)
+        timing_workers.append(worker)
+        timing_worker_refs.append(
+            {
+                "worker_index": index,
+                "path": f"timing_workers/worker_{index}.json",
+                "sha256": worker_hash,
+                "task_count": 8,
+            }
+        )
+        exit_path = output / f"timing_workers/exit_{index}.json"
+        _json(
+            exit_path,
+            {
+                "schema_version": 1,
+                "complete": True,
+                "worker_index": index,
+                "exit_code": 0,
+                "worker_report_sha256": worker_hash,
+            },
+        )
+        timing_exit_refs.append(
+            {
+                "worker_index": index,
+                "path": f"timing_workers/exit_{index}.json",
+                "sha256": AUDIT.file_sha256(exit_path),
+                "exit_code": 0,
+            }
+        )
+    starts = [worker["measurement_started_monotonic_seconds"] for worker in timing_workers]
+    barrier_proof = {
+        "synchronized": True,
+        "start_path": "timing_barrier/start.json",
+        "start_sha256": start_hash,
+        "common_identity_sha256": start["common_identity_sha256"],
+        "ready_reports": ready_refs,
+        "start_monotonic_seconds": 10.0,
+        "observed_start_skew_seconds": max(starts) - min(starts),
+        "maximum_start_skew_seconds": 5.0,
+    }
+    _json(
         output / "timing_smoke.json",
         {
-            "schema_version": 5,
+            "schema_version": 6,
             "complete": True,
             "passed": True,
             "config_digest": digest,
+            "artifact_hashes": artifact_hashes,
+            "source_hashes_sha256": "4" * 64,
             "probe_seed": 99,
-            "task_count": 1,
+            "task_count": 8,
+            "measured_task_count": 32,
+            "measured_worker_count": 4,
+            "topology": topology,
+            "selection_policy": "opaque_size_stratified",
+            "selection_manifest_sha256": "7" * 64,
+            "names_and_concept_results_suppressed": True,
             "saved_concept_metric_count": 0,
             "companion_full_code_matrix_format": "scipy_csr_exact_values",
             "companion_l2_path_optimization": (
                 "parallel_independent_cold_C_loky_cold_selected_C_refit"
             ),
-            "companion_full_code_cold_C_jobs_per_worker": 10,
+            "companion_full_code_cold_C_jobs_per_worker": 8,
+            "runtime_resources": _runtime_resources(),
+            "cpu_budget_sha256": cpu_budget_hash,
+            "cache_generation_timing": common_identity["cache_generation_timing"],
+            "timing_worker_reports": timing_worker_refs,
+            "timing_worker_exit_sentinels": timing_exit_refs,
+            "barrier": barrier_proof,
+            "cgroup_cpu_stat_deltas": [cpu_delta] * 4,
+            "projection": {
+                "aggregation": "slowest_measured_worker",
+                "initialization_accounting": (
+                    "maximum_pre_barrier_initialization_added_once"
+                ),
+                "maximum_initialization_seconds": 5.0,
+                "projected_pod_hours": 1.0,
+            },
         },
     )
     split = AUDIT._expected_split(config, "task_a", 11, 4)
@@ -293,7 +491,7 @@ def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
             "l2_path_optimization": (
                 "parallel_independent_cold_C_loky_cold_selected_C_refit"
             ),
-            "full_code_cold_C_jobs": 10,
+            "full_code_cold_C_jobs": 8,
             "heldout_split_id": split["split_id"],
             "heldout_example_count": 4,
             "heldout_example_id_policy": split["example_id_policy"],
@@ -331,6 +529,7 @@ def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
                 "sparse_job_count": 1,
                 "companion_job_count": len(companion_seeds),
                 "timing_smoke_sha256": timing_hash,
+                "runtime_resources": _runtime_resources(),
             },
         )
 
@@ -401,6 +600,17 @@ def test_audit_rejects_extra_artifacts(tmp_path: Path) -> None:
         AUDIT.audit_artifacts(config_path=config, output_root=output, phase="pre-aggregate")
 
 
+def test_audit_rejects_worker_runtime_identity_drift(tmp_path: Path) -> None:
+    config, output = _build_tree(tmp_path)
+    worker_path = output / "workers/worker_0.json"
+    worker = json.loads(worker_path.read_text())
+    worker["runtime_resources"]["threads_per_worker"] = 7
+    _json(worker_path, worker)
+
+    with pytest.raises(AUDIT.AuditError, match="worker 0 threads_per_worker drift"):
+        AUDIT.audit_artifacts(config_path=config, output_root=output, phase="pre-aggregate")
+
+
 def test_audit_rejects_cross_representation_split_misalignment(tmp_path: Path) -> None:
     config, output = _build_tree(tmp_path)
     weight_path = output / "companion/tiny-checkpoint/seed_11/weights/task_a.pt"
@@ -417,4 +627,34 @@ def test_audit_rejects_cross_representation_split_misalignment(tmp_path: Path) -
     _json(done_path, done)
 
     with pytest.raises(AUDIT.AuditError, match="held-out split mismatch"):
+        AUDIT.audit_artifacts(config_path=config, output_root=output, phase="pre-aggregate")
+
+
+def test_audit_rejects_timing_exit_not_bound_to_worker_report(tmp_path: Path) -> None:
+    config, output = _build_tree(tmp_path)
+    exit_path = output / "timing_workers/exit_0.json"
+    sentinel = json.loads(exit_path.read_text())
+    sentinel["worker_report_sha256"] = "0" * 64
+    _json(exit_path, sentinel)
+    timing_path = output / "timing_smoke.json"
+    timing = json.loads(timing_path.read_text())
+    timing["timing_worker_exit_sentinels"][0]["sha256"] = AUDIT.file_sha256(exit_path)
+    _json(timing_path, timing)
+
+    with pytest.raises(AUDIT.AuditError, match="not bound to its report"):
+        AUDIT.audit_artifacts(config_path=config, output_root=output, phase="pre-aggregate")
+
+
+def test_audit_rejects_extra_concept_field_in_timing_worker(tmp_path: Path) -> None:
+    config, output = _build_tree(tmp_path)
+    worker_path = output / "timing_workers/worker_0.json"
+    worker = json.loads(worker_path.read_text())
+    worker["dataset"] = "forbidden_task_name"
+    _json(worker_path, worker)
+    timing_path = output / "timing_smoke.json"
+    timing = json.loads(timing_path.read_text())
+    timing["timing_worker_reports"][0]["sha256"] = AUDIT.file_sha256(worker_path)
+    _json(timing_path, timing)
+
+    with pytest.raises(AUDIT.AuditError, match="schema or privacy"):
         AUDIT.audit_artifacts(config_path=config, output_root=output, phase="pre-aggregate")

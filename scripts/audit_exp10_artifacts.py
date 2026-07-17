@@ -19,6 +19,86 @@ import torch
 
 METHODS = ("mse", "dpsae")
 METRIC_KEYS = {"test_f1", "test_acc", "test_auc", "val_auc"}
+TIMING_TASK_KEYS = {
+    "slot",
+    "quartile",
+    "n_train",
+    "n_test",
+    "stage_seconds",
+    "total_seconds",
+    "peak_rss_mib",
+    "peak_gpu_allocated_bytes",
+    "peak_gpu_reserved_bytes",
+}
+TIMING_READY_KEYS = {
+    "schema_version",
+    "complete",
+    "worker_index",
+    "config_digest",
+    "artifact_hashes",
+    "source_hashes_sha256",
+    "dependency_environment_sha256",
+    "cache_ready_sha256",
+    "cache_file_hashes_sha256",
+    "selection_manifest_sha256",
+    "selected_opaque_slots",
+    "runtime_resources",
+    "cpu_budget_sha256",
+    "cache_generation_timing",
+    "topology",
+    "initialization_seconds",
+    "ready_monotonic_seconds",
+}
+TIMING_WORKER_KEYS = TIMING_READY_KEYS | {
+    "barrier_start_sha256",
+    "barrier_start_monotonic_seconds",
+    "measurement_started_monotonic_seconds",
+    "measurement_finished_monotonic_seconds",
+    "measurement_seconds",
+    "task_count",
+    "names_and_concept_results_suppressed",
+    "saved_concept_metric_count",
+    "cgroup_cpu_stat_delta",
+    "tasks",
+}
+TIMING_REPORT_KEYS = {
+    "schema_version",
+    "complete",
+    "passed",
+    "config_digest",
+    "artifact_hashes",
+    "source_hashes_sha256",
+    "probe_seed",
+    "task_count",
+    "measured_task_count",
+    "measured_worker_count",
+    "topology",
+    "selection_policy",
+    "selection_manifest_sha256",
+    "names_and_concept_results_suppressed",
+    "saved_concept_metric_count",
+    "companion_full_code_matrix_format",
+    "companion_l2_path_optimization",
+    "companion_full_code_cold_C_jobs_per_worker",
+    "runtime_resources",
+    "cpu_budget_sha256",
+    "cache_generation_timing",
+    "timing_worker_reports",
+    "timing_worker_exit_sentinels",
+    "barrier",
+    "cgroup_cpu_stat_deltas",
+    "projection",
+}
+TIMING_BARRIER_PROOF_KEYS = {
+    "synchronized",
+    "start_path",
+    "start_sha256",
+    "common_identity_sha256",
+    "ready_reports",
+    "start_monotonic_seconds",
+    "observed_start_skew_seconds",
+    "maximum_start_skew_seconds",
+}
 
 
 class AuditError(RuntimeError):
@@ -74,6 +154,141 @@ def _finite_number(value: Any, label: str, *, positive: bool = False) -> float:
     if positive:
         _require(number > 0, f"{label} is not positive")
     return number
+
+
+def _validate_runtime_resources(
+    config: Mapping[str, Any], value: Any, label: str
+) -> dict[str, Any]:
+    _require(isinstance(value, Mapping), f"{label} runtime resources are not an object")
+    resources = dict(value)
+    expected_keys = {
+        "visible_cpu_count",
+        "cgroup_quota_cores",
+        "effective_cpu_count",
+        "worker_count",
+        "threads_per_worker",
+        "environment",
+    }
+    _require(set(resources) == expected_keys, f"{label} runtime resource schema drift")
+    frozen = config["runtime"]["resource_identity"]
+    for key in ("cgroup_quota_cores", "effective_cpu_count", "threads_per_worker"):
+        _require(resources.get(key) == frozen[key], f"{label} {key} drift")
+    worker_count = int(config["runtime"]["worker_count"])
+    _require(resources.get("worker_count") == worker_count, f"{label} worker count drift")
+    visible = resources.get("visible_cpu_count")
+    _require(
+        isinstance(visible, int)
+        and not isinstance(visible, bool)
+        and visible >= int(frozen["effective_cpu_count"]),
+        f"{label} visible CPU count drift",
+    )
+    expected_environment = {
+        "LOKY_MAX_CPU_COUNT": str(frozen["effective_cpu_count"]),
+        "OMP_NUM_THREADS": str(frozen["threads_per_worker"]),
+        "MKL_NUM_THREADS": str(frozen["threads_per_worker"]),
+        "OPENBLAS_NUM_THREADS": str(frozen["threads_per_worker"]),
+        "NUMEXPR_NUM_THREADS": str(frozen["threads_per_worker"]),
+    }
+    _require(
+        resources.get("environment") == expected_environment,
+        f"{label} thread-cap environment drift",
+    )
+    return resources
+
+
+def _validate_cpu_budget(
+    config: Mapping[str, Any], value: Any, label: str
+) -> dict[str, Any]:
+    _require(isinstance(value, Mapping), f"{label} CPU budget is not an object")
+    budget = dict(value)
+    expected_keys = {
+        "visible_cpu_count",
+        "cgroup_quota_cores",
+        "effective_cpu_count",
+        "worker_count",
+        "threads_per_worker",
+    }
+    _require(set(budget) == expected_keys, f"{label} CPU budget schema drift")
+    frozen = config["runtime"]["resource_identity"]
+    for key in ("cgroup_quota_cores", "effective_cpu_count", "threads_per_worker"):
+        _require(budget.get(key) == frozen[key], f"{label} {key} drift")
+    _require(
+        budget.get("worker_count") == int(config["runtime"]["worker_count"]),
+        f"{label} worker count drift",
+    )
+    visible = budget.get("visible_cpu_count")
+    _require(
+        isinstance(visible, int)
+        and not isinstance(visible, bool)
+        and visible >= int(frozen["effective_cpu_count"]),
+        f"{label} visible CPU count drift",
+    )
+    return budget
+
+
+def _timing_topology(config: Mapping[str, Any]) -> dict[str, Any]:
+    runtime = config["runtime"]
+    timing = runtime["timing_smoke"]
+    return {
+        "mode": timing["topology_mode"],
+        "measured_worker_count": int(timing["measured_worker_count"]),
+        "tasks_per_worker": int(timing["task_count"]),
+        "same_task_set_per_worker": bool(timing["same_task_set_per_worker"]),
+        "barrier_synchronized": True,
+        "cold_c_jobs_per_worker": int(runtime["companion_full_code_cold_C_jobs_per_worker"]),
+        "parent_threads_per_worker": int(runtime["resource_identity"]["threads_per_worker"]),
+        "loky_inner_max_num_threads": 1,
+    }
+
+
+def _validate_cpu_stat_delta(value: Any, label: str) -> None:
+    _require(
+        isinstance(value, Mapping) and set(value) == {"path", "before", "after", "delta"},
+        f"{label} cgroup cpu.stat schema drift",
+    )
+    before, after, delta = value["before"], value["after"], value["delta"]
+    _require(
+        all(isinstance(item, Mapping) for item in (before, after, delta))
+        and set(before) == set(after) == set(delta),
+        f"{label} cgroup cpu.stat counters drift",
+    )
+    _require(
+        {"nr_periods", "nr_throttled"}.issubset(delta)
+        and ("throttled_time" in delta or "throttled_usec" in delta),
+        f"{label} cgroup cpu.stat throttling counters missing",
+    )
+    for key in delta:
+        _require(
+            all(isinstance(item[key], int) and not isinstance(item[key], bool) for item in (before, after, delta))
+            and after[key] - before[key] == delta[key]
+            and delta[key] >= 0,
+            f"{label} cgroup cpu.stat delta invalid for {key}",
+        )
+    _require(delta["nr_periods"] > 0, f"{label} observed no cgroup quota periods")
+
+
+def _validate_timing_rows(config: Mapping[str, Any], value: Any, label: str) -> list[Any]:
+    count = int(config["runtime"]["timing_smoke"]["task_count"])
+    _require(isinstance(value, list) and len(value) == count, f"{label} task count drift")
+    identity = []
+    for index, row in enumerate(value):
+        _require(
+            isinstance(row, Mapping) and set(row) == TIMING_TASK_KEYS,
+            f"{label} task schema or privacy boundary drift",
+        )
+        slot = f"quartile_{index // 2}_sample_{index % 2}"
+        _require(
+            row.get("slot") == slot and row.get("quartile") == index // 2,
+            f"{label} opaque slot order drift",
+        )
+        stages = row.get("stage_seconds")
+        _require(
+            isinstance(stages, Mapping)
+            and set(stages) == {"sparse_method_0", "sparse_method_1", "companion"},
+            f"{label} timing stage schema drift",
+        )
+        identity.append((row["slot"], row["quartile"], row["n_train"], row["n_test"]))
+    return identity
 
 
 def _read_json(path: Path) -> Any:
@@ -293,13 +508,21 @@ class ArtifactAuditor:
             )
         self.record(ready_path, "cache_ready")
 
+        cpu_budget_path = self.output_root / "cpu_budget.json"
+        cpu_budget = _validate_cpu_budget(
+            self.config, _read_json(cpu_budget_path), "launcher"
+        )
+        cpu_budget_hash = self.record(cpu_budget_path, "cpu_budget")
+
         runtime = self.config.get("runtime", {})
         timing = runtime.get("timing_smoke") if isinstance(runtime, Mapping) else None
         if isinstance(timing, Mapping) and timing.get("require_passed_report_before_workers"):
             timing_path = self.output_root / "timing_smoke.json"
             report = _read_json(timing_path)
             _require(
-                report.get("schema_version") == 5
+                isinstance(report, Mapping)
+                and set(report) == TIMING_REPORT_KEYS
+                and report.get("schema_version") == 6
                 and report.get("complete") is True
                 and report.get("passed") is True,
                 "timing-smoke gate did not pass",
@@ -333,6 +556,243 @@ class ArtifactAuditor:
             _require(
                 report.get("saved_concept_metric_count") == 0,
                 "timing smoke retained concept metrics",
+            )
+            _validate_runtime_resources(
+                self.config, report.get("runtime_resources"), "timing-smoke"
+            )
+            _require(
+                report.get("cpu_budget_sha256") == cpu_budget_hash,
+                "timing-smoke CPU-budget hash drift",
+            )
+            _require(
+                all(
+                    report["runtime_resources"].get(key) == value
+                    for key, value in cpu_budget.items()
+                ),
+                "timing-smoke resources differ from launcher CPU budget",
+            )
+            topology = _timing_topology(self.config)
+            worker_count = int(timing["measured_worker_count"])
+            task_count = int(timing["task_count"])
+            _require(report.get("topology") == topology, "timing-smoke topology drift")
+            _require(
+                report.get("measured_worker_count") == worker_count
+                and report.get("measured_task_count") == worker_count * task_count,
+                "timing-smoke measured fleet cardinality drift",
+            )
+            worker_refs = report.get("timing_worker_reports")
+            exit_refs = report.get("timing_worker_exit_sentinels")
+            _require(
+                isinstance(worker_refs, list)
+                and isinstance(exit_refs, list)
+                and len(worker_refs) == len(exit_refs) == worker_count,
+                "timing-smoke worker proof cardinality drift",
+            )
+            workers = []
+            task_identity = None
+            common_identity = None
+            common_keys = (
+                "config_digest",
+                "artifact_hashes",
+                "source_hashes_sha256",
+                "dependency_environment_sha256",
+                "cache_ready_sha256",
+                "cache_file_hashes_sha256",
+                "selection_manifest_sha256",
+                "selected_opaque_slots",
+                "runtime_resources",
+                "cpu_budget_sha256",
+                "cache_generation_timing",
+                "topology",
+            )
+            for index, ref in enumerate(worker_refs):
+                _require(
+                    isinstance(ref, Mapping)
+                    and set(ref) == {"worker_index", "path", "sha256", "task_count"}
+                    and ref.get("worker_index") == index
+                    and ref.get("task_count") == task_count,
+                    f"timing worker reference {index} drift",
+                )
+                relative = Path(str(ref["path"]))
+                _require(not relative.is_absolute(), f"timing worker path {index} is absolute")
+                worker_path = (self.output_root / relative).resolve()
+                _require(
+                    self.output_root.resolve() in worker_path.parents,
+                    f"timing worker path {index} escapes the output root",
+                )
+                digest = self.record(worker_path, "timing_worker_report", worker_index=index)
+                _require(digest == ref.get("sha256"), f"timing worker hash {index} drift")
+                worker = _read_json(worker_path)
+                _require(
+                    isinstance(worker, Mapping)
+                    and set(worker) == TIMING_WORKER_KEYS
+                    and worker.get("schema_version") == 1
+                    and worker.get("complete") is True
+                    and worker.get("worker_index") == index
+                    and worker.get("config_digest") == self.config_digest
+                    and worker.get("topology") == topology
+                    and worker.get("task_count") == task_count
+                    and worker.get("names_and_concept_results_suppressed") is True
+                    and worker.get("saved_concept_metric_count") == 0,
+                    f"timing worker {index} schema or privacy drift",
+                )
+                _validate_runtime_resources(
+                    self.config, worker.get("runtime_resources"), f"timing worker {index}"
+                )
+                _require(
+                    worker.get("cpu_budget_sha256") == cpu_budget_hash,
+                    f"timing worker {index} CPU-budget hash drift",
+                )
+                observed_identity = {key: worker.get(key) for key in common_keys}
+                if common_identity is None:
+                    common_identity = observed_identity
+                _require(
+                    observed_identity == common_identity,
+                    f"timing worker {index} common identity drift",
+                )
+                observed_tasks = _validate_timing_rows(
+                    self.config, worker.get("tasks"), f"timing worker {index}"
+                )
+                if task_identity is None:
+                    task_identity = observed_tasks
+                _require(
+                    observed_tasks == task_identity,
+                    f"timing worker {index} did not measure the same opaque tasks",
+                )
+                _validate_cpu_stat_delta(
+                    worker.get("cgroup_cpu_stat_delta"), f"timing worker {index}"
+                )
+                workers.append(worker)
+
+                exit_ref = exit_refs[index]
+                _require(
+                    isinstance(exit_ref, Mapping)
+                    and set(exit_ref) == {"worker_index", "path", "sha256", "exit_code"}
+                    and exit_ref.get("worker_index") == index
+                    and exit_ref.get("exit_code") == 0,
+                    f"timing worker exit reference {index} drift",
+                )
+                exit_relative = Path(str(exit_ref["path"]))
+                _require(not exit_relative.is_absolute(), f"timing exit path {index} is absolute")
+                exit_path = (self.output_root / exit_relative).resolve()
+                _require(
+                    self.output_root.resolve() in exit_path.parents,
+                    f"timing exit path {index} escapes the output root",
+                )
+                exit_hash = self.record(
+                    exit_path, "timing_worker_exit", worker_index=index
+                )
+                _require(exit_hash == exit_ref.get("sha256"), f"timing exit hash {index} drift")
+                sentinel = _read_json(exit_path)
+                _require(
+                    set(sentinel)
+                    == {
+                        "schema_version",
+                        "complete",
+                        "worker_index",
+                        "exit_code",
+                        "worker_report_sha256",
+                    }
+                    and sentinel.get("schema_version") == 1
+                    and sentinel.get("complete") is True
+                    and sentinel.get("worker_index") == index
+                    and sentinel.get("exit_code") == 0
+                    and sentinel.get("worker_report_sha256") == digest,
+                    f"timing worker exit sentinel {index} is not bound to its report",
+                )
+
+            barrier = report.get("barrier")
+            _require(
+                isinstance(barrier, Mapping)
+                and set(barrier) == TIMING_BARRIER_PROOF_KEYS
+                and barrier.get("synchronized") is True
+                and barrier.get("start_path") == "timing_barrier/start.json"
+                and barrier.get("maximum_start_skew_seconds")
+                == float(timing["maximum_start_skew_seconds"]),
+                "timing barrier proof drift",
+            )
+            start_path = self.output_root / "timing_barrier/start.json"
+            start_hash = self.record(start_path, "timing_barrier_start")
+            _require(start_hash == barrier.get("start_sha256"), "timing barrier hash drift")
+            start = _read_json(start_path)
+            _require(
+                set(start)
+                == {
+                    "schema_version",
+                    "complete",
+                    "topology",
+                    "worker_count",
+                    "common_identity_sha256",
+                    "start_monotonic_seconds",
+                    "start_unix_seconds",
+                    "ready_reports",
+                }
+                and start.get("schema_version") == 1
+                and start.get("complete") is True
+                and start.get("topology") == "four_worker_same_tasks"
+                and start.get("worker_count") == worker_count
+                and start.get("common_identity_sha256") == canonical_digest(common_identity),
+                "timing barrier start schema or identity drift",
+            )
+            ready_refs = start.get("ready_reports")
+            _require(
+                isinstance(ready_refs, list) and len(ready_refs) == worker_count,
+                "timing ready proof cardinality drift",
+            )
+            for index, ref in enumerate(ready_refs):
+                _require(
+                    isinstance(ref, Mapping)
+                    and set(ref) == {"worker_index", "path", "sha256"}
+                    and ref.get("worker_index") == index,
+                    f"timing ready reference {index} drift",
+                )
+                ready_artifact_path = (self.output_root / str(ref["path"])).resolve()
+                _require(
+                    self.output_root.resolve() in ready_artifact_path.parents,
+                    f"timing ready path {index} escapes the output root",
+                )
+                ready_hash = self.record(
+                    ready_artifact_path, "timing_barrier_ready", worker_index=index
+                )
+                _require(ready_hash == ref.get("sha256"), f"timing ready hash {index} drift")
+                ready_artifact = _read_json(ready_artifact_path)
+                _require(
+                    set(ready_artifact) == TIMING_READY_KEYS
+                    and ready_artifact.get("worker_index") == index
+                    and {key: ready_artifact.get(key) for key in common_keys}
+                    == common_identity,
+                    f"timing ready artifact {index} identity drift",
+                )
+            starts = [float(worker["measurement_started_monotonic_seconds"]) for worker in workers]
+            observed_skew = max(starts) - min(starts)
+            _require(
+                math.isclose(
+                    float(barrier.get("observed_start_skew_seconds", math.nan)),
+                    observed_skew,
+                    abs_tol=1e-6,
+                    rel_tol=1e-9,
+                )
+                and observed_skew <= float(timing["maximum_start_skew_seconds"]),
+                "timing barrier start skew drift",
+            )
+            projection = report.get("projection")
+            _require(
+                isinstance(projection, Mapping)
+                and projection.get("aggregation") == "slowest_measured_worker"
+                and projection.get("initialization_accounting")
+                == "maximum_pre_barrier_initialization_added_once"
+                and math.isclose(
+                    float(projection.get("maximum_initialization_seconds", math.nan)),
+                    max(float(worker["initialization_seconds"]) for worker in workers),
+                    abs_tol=1e-6,
+                    rel_tol=1e-9,
+                ),
+                "timing slowest-worker projection or initialization accounting drift",
+            )
+            _require(
+                report.get("cgroup_cpu_stat_deltas")
+                == [worker["cgroup_cpu_stat_delta"] for worker in workers],
+                "timing cgroup cpu.stat proof drift",
             )
             self.record(timing_path, "timing_smoke")
 
@@ -834,6 +1294,13 @@ class ArtifactAuditor:
         _require(set(by_index) == set(range(worker_count)), "worker index coverage drift")
         timing_path = self.output_root / "timing_smoke.json"
         timing_hash = file_sha256(timing_path) if timing_path.is_file() else None
+        timing_resources = None
+        if timing_path.is_file():
+            timing_resources = _validate_runtime_resources(
+                self.config,
+                _read_json(timing_path).get("runtime_resources"),
+                "timing-smoke",
+            )
         for index in range(worker_count):
             path, report = by_index[index]
             shard = sparse_shards[index]
@@ -855,6 +1322,13 @@ class ArtifactAuditor:
                     report.get("timing_smoke_sha256") == timing_hash,
                     f"worker {index} timing-smoke hash drift",
                 )
+            worker_resources = _validate_runtime_resources(
+                self.config, report.get("runtime_resources"), f"worker {index}"
+            )
+            _require(
+                worker_resources == timing_resources,
+                f"worker {index} runtime resources differ from timing-smoke",
+            )
             self.record(path, "worker_summary", worker_index=index)
 
     def audit_final(self) -> None:
@@ -991,6 +1465,7 @@ class ArtifactAuditor:
             "resolved_config": 1,
             "eligibility": 1,
             "cache_ready": 1,
+            "cpu_budget": 1,
             "cache_activation": datasets,
             "sparse_done": len(METHODS) * seeds,
             "saebench_result": len(METHODS) * seeds,
@@ -1005,6 +1480,11 @@ class ArtifactAuditor:
         timing = runtime.get("timing_smoke") if isinstance(runtime, Mapping) else None
         if isinstance(timing, Mapping) and timing.get("require_passed_report_before_workers"):
             counts["timing_smoke"] = 1
+            measured_workers = int(timing["measured_worker_count"])
+            counts["timing_worker_report"] = measured_workers
+            counts["timing_worker_exit"] = measured_workers
+            counts["timing_barrier_ready"] = measured_workers
+            counts["timing_barrier_start"] = 1
         if phase == "final":
             counts.update(
                 {"candidate_associations": 1, "candidate_manifest": 1, "advancement_report": 1}

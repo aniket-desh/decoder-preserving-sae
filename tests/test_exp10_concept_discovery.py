@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 import torch
 
+from dpsae.cpu_quota import CpuBudget
 from dpsae.language_model import ActivationStats
 from dpsae.language_sae import BatchTopKSAE
 from dpsae.saebench_adapter import (
@@ -19,6 +20,115 @@ from experiments import exp10_concept_discovery as runner
 
 def _write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, sort_keys=True))
+
+
+def _runtime_resources() -> dict[str, object]:
+    return {
+        "visible_cpu_count": 128,
+        "cgroup_quota_cores": 32.3,
+        "effective_cpu_count": 32,
+        "worker_count": 4,
+        "threads_per_worker": 8,
+        "environment": {
+            "LOKY_MAX_CPU_COUNT": "32",
+            "OMP_NUM_THREADS": "8",
+            "MKL_NUM_THREADS": "8",
+            "OPENBLAS_NUM_THREADS": "8",
+            "NUMEXPR_NUM_THREADS": "8",
+        },
+    }
+
+
+def _write_cpu_budget(path: Path) -> None:
+    resources = _runtime_resources()
+    _write_json(path, {key: value for key, value in resources.items() if key != "environment"})
+
+
+def _timing_rows(*, multiplier: float = 1.0) -> list[dict[str, object]]:
+    rows = []
+    for index in range(8):
+        sparse_0 = {
+            "primary_data_load": 0.1 * multiplier,
+            "primary_encode": 0.1 * multiplier,
+            "primary_l1": 0.3 * multiplier,
+            "provenance_data_load": 0.1 * multiplier,
+            "provenance_encode": 0.1 * multiplier,
+            "provenance_l1": 0.3 * multiplier,
+            "total": 1.0 * multiplier,
+        }
+        sparse_1 = {**sparse_0, "total": 2.0 * multiplier}
+        sparse_1["primary_l1"] = 0.8 * multiplier
+        sparse_1["provenance_l1"] = 0.8 * multiplier
+        companion = {
+            "data_load": 0.2 * multiplier,
+            "encode_decode": 0.3 * multiplier,
+            "original_l2": 0.5 * multiplier,
+            "full_code_l2": 1.5 * multiplier,
+            "reconstruction_l2": 0.5 * multiplier,
+            "total": 3.0 * multiplier,
+        }
+        rows.append(
+            {
+                "slot": f"quartile_{index // 2}_sample_{index % 2}",
+                "quartile": index // 2,
+                "n_train": 1024,
+                "n_test": 100,
+                "stage_seconds": {
+                    "sparse_method_0": sparse_0,
+                    "sparse_method_1": sparse_1,
+                    "companion": companion,
+                },
+                "total_seconds": 6.0 * multiplier,
+                "peak_rss_mib": 512.0,
+                "peak_gpu_allocated_bytes": 1024,
+                "peak_gpu_reserved_bytes": 2048,
+            }
+        )
+    return rows
+
+
+def _cpu_stat_delta() -> dict[str, object]:
+    return {
+        "path": "/sys/fs/cgroup/cpu.stat",
+        "before": {"nr_periods": 10, "nr_throttled": 2, "throttled_usec": 100},
+        "after": {"nr_periods": 20, "nr_throttled": 5, "throttled_usec": 250},
+        "delta": {"nr_periods": 10, "nr_throttled": 3, "throttled_usec": 150},
+    }
+
+
+def _timing_worker(config: dict, index: int, *, multiplier: float = 1.0) -> dict:
+    return {
+        "schema_version": 1,
+        "complete": True,
+        "worker_index": index,
+        "config_digest": runner.canonical_digest(config),
+        "artifact_hashes": {"models_sha256": "a" * 64},
+        "source_hashes_sha256": "b" * 64,
+        "dependency_environment_sha256": "c" * 64,
+        "cache_ready_sha256": "d" * 64,
+        "cache_file_hashes_sha256": "e" * 64,
+        "selection_manifest_sha256": "f" * 64,
+        "selected_opaque_slots": runner._expected_selected_slots(config),
+        "runtime_resources": _runtime_resources(),
+        "cpu_budget_sha256": "1" * 64,
+        "cache_generation_timing": {
+            "source": "in_process_monotonic",
+            "generation_seconds": 100.0,
+        },
+        "topology": runner._timing_topology(config),
+        "initialization_seconds": 4.0 + index,
+        "ready_monotonic_seconds": 9.0,
+        "barrier_start_sha256": "2" * 64,
+        "barrier_start_monotonic_seconds": 10.0,
+        "measurement_started_monotonic_seconds": 10.1 + index * 0.1,
+        "measurement_finished_monotonic_seconds": 20.1 + index * 0.1,
+        "measurement_seconds": 10.0,
+        "task_count": 8,
+        "names_and_concept_results_suppressed": True,
+        "saved_concept_metric_count": 0,
+        "cgroup_cpu_stat_delta": _cpu_stat_delta(),
+        "tasks": _timing_rows(multiplier=multiplier),
+    }
 
 
 def native_payload(*, method: str, d_in: int = 3, d_sae: int = 5, k: int = 2):
@@ -86,7 +196,7 @@ def test_frozen_config_hashes_dataset_family_and_regularization_contracts():
         config["benchmark"]["companion_l2_path_optimization"]
         == "parallel_independent_cold_C_loky_cold_selected_C_refit"
     )
-    assert config["runtime"]["companion_full_code_cold_C_jobs_per_worker"] == 10
+    assert config["runtime"]["companion_full_code_cold_C_jobs_per_worker"] == 8
     assert config["benchmark"]["saebench_include_llm_baseline"] is False
     assert "unfiltered logreg baseline" in config["benchmark"]["companion_regularization_rationale"]
     assert set(config["benchmark"]["family_by_dataset"]) == set(config["benchmark"]["datasets"])
@@ -95,6 +205,11 @@ def test_frozen_config_hashes_dataset_family_and_regularization_contracts():
     assert config["runpod"]["pod_hour_usd"] == 1.8
     runtime = config["runtime"]
     assert runtime["worker_count"] == 4
+    assert runtime["resource_identity"] == {
+        "cgroup_quota_cores": 32.3,
+        "effective_cpu_count": 32,
+        "threads_per_worker": 8,
+    }
     assert [len(shard) for shard in runtime["companion_seed_shards"]] == [3, 3, 2, 2]
     assert runtime["cache_adapters_once_per_worker"] is True
     assert (
@@ -113,6 +228,8 @@ def test_source_hashes_accepts_repository_relative_config_path():
     assert "configs/exp10_concept_discovery.json" in hashes
     assert "experiments/exp10_concept_discovery.py" in hashes
     assert "src/dpsae/saebench_adapter.py" in hashes
+    assert "src/dpsae/cpu_quota.py" in hashes
+    assert "scripts/run_steps1_4_autonomous_runpod.sh" in hashes
 
 
 def test_repository_state_requires_clean_revision(monkeypatch):
@@ -149,13 +266,35 @@ def test_launcher_records_environment_and_deployed_sources():
     assert "audit_exp10_artifacts.py" in launcher
 
 
+def test_autonomous_supervisor_requires_schema_v6_cpu_identity():
+    supervisor = (runner.ROOT / "scripts/run_steps1_4_autonomous_runpod.sh").read_text()
+
+    assert "dpsae.cpu_quota json" in supervisor
+    assert ".schema_version == 6" in supervisor
+    assert ".runtime_resources.cgroup_quota_cores" in supervisor
+    assert ".runtime_resources.effective_cpu_count" in supervisor
+    assert ".runtime_resources.threads_per_worker" in supervisor
+    assert "schema-v6/config/runtime identity checks" in supervisor
+
+
 def test_timing_launcher_self_detaches_into_tmux():
     launcher = (runner.ROOT / "scripts/run_exp10_timing_smoke_a40.sh").read_text()
 
     assert 'MODE="${1:-}"' in launcher
     assert 'tmux new-session -d -s "$SESSION"' in launcher
-    assert "run_exp10_timing_smoke_a40.sh' --worker" in launcher
-    assert "timing-preflight" in launcher
+    assert "run_exp10_timing_smoke_a40.sh' --coordinator" in launcher
+    assert 'tmux set-option -t "$SESSION" remain-on-exit on' in launcher
+    assert 'for worker_index in 0 1 2 3' in launcher
+    assert "timing-worker" in launcher
+    assert "timing-start-barrier" in launcher
+    assert "timing-finalize" in launcher
+    assert "worker_report_sha256" in launcher
+    assert "setsid env" in launcher
+    assert 'kill -TERM -- "-$pid"' in launcher
+    assert 'kill -KILL -- "-$pid"' in launcher
+    assert "trap 'cleanup_children 143' TERM" in launcher
+    assert 'wait "$pid"' in launcher
+    assert '$(cd "$SAEBENCH_ROOT/.venv" && pwd)' in launcher
     assert "--cold-cache-provenance" in launcher
 
 
@@ -177,46 +316,97 @@ def test_timing_smoke_selection_is_size_only_deterministic_and_stratified():
     assert all(item["n_train"] == min(item["dataset_size"] - 100, 1024) for item in first)
 
 
-def test_timing_smoke_gate_accepts_only_the_frozen_blind_contract(tmp_path: Path):
+def test_timing_smoke_gate_accepts_only_the_frozen_blind_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     config = runner.load_config()
-    smoke = config["runtime"]["timing_smoke"]
-    (tmp_path / "cache_ready.json").write_text(
-        json.dumps(
+    resolved = {
+        "config_digest": runner.canonical_digest(config),
+        "artifact_hashes": {"models_sha256": "a" * 64},
+        "source_hashes": {"runner": "b" * 64},
+    }
+    _write_json(
+        tmp_path / "cache_ready.json",
+        {"generation_seconds": 100.0, "generation_timing_source": "in_process_monotonic"},
+    )
+    _write_cpu_budget(tmp_path / "cpu_budget.json")
+    workers = [_timing_worker(config, index) for index in range(4)]
+    for worker in workers:
+        worker["cpu_budget_sha256"] = runner.file_sha256(tmp_path / "cpu_budget.json")
+    (tmp_path / "timing_workers").mkdir()
+    (tmp_path / "timing_barrier").mkdir()
+    start = {
+        "schema_version": 1,
+        "complete": True,
+        "topology": "four_worker_same_tasks",
+        "worker_count": 4,
+        "common_identity_sha256": runner.canonical_digest(
+            runner._timing_common_identity(workers[0])
+        ),
+        "start_monotonic_seconds": 10.0,
+        "start_unix_seconds": 1000.0,
+        "ready_reports": [],
+    }
+    runner.atomic_json(tmp_path / "timing_barrier/start.json", start)
+    start_hash = runner.file_sha256(tmp_path / "timing_barrier/start.json")
+    worker_refs = []
+    exit_refs = []
+    for index, worker in enumerate(workers):
+        worker["barrier_start_sha256"] = start_hash
+        worker_path = tmp_path / f"timing_workers/worker_{index}.json"
+        runner.atomic_json(worker_path, worker)
+        exit_value = {
+            "schema_version": 1,
+            "complete": True,
+            "worker_index": index,
+            "exit_code": 0,
+            "worker_report_sha256": runner.file_sha256(worker_path),
+        }
+        exit_path = tmp_path / f"timing_workers/exit_{index}.json"
+        runner.atomic_json(exit_path, exit_value)
+        worker_refs.append(
             {
-                "generation_seconds": 100.0,
-                "generation_timing_source": "in_process_monotonic",
+                "worker_index": index,
+                "path": f"timing_workers/worker_{index}.json",
+                "sha256": runner.file_sha256(worker_path),
+                "task_count": 8,
             }
         )
-    )
-    report = {
-        "schema_version": 5,
-        "complete": True,
-        "passed": True,
-        "config_digest": runner.canonical_digest(config),
-        "probe_seed": smoke["probe_seed"],
-        "task_count": smoke["task_count"],
-        "names_and_concept_results_suppressed": True,
-        "saved_concept_metric_count": 0,
-        "companion_full_code_matrix_format": "scipy_csr_exact_values",
-        "companion_l2_path_optimization": (
-            "parallel_independent_cold_C_loky_cold_selected_C_refit"
-        ),
-        "companion_full_code_cold_C_jobs_per_worker": 10,
-        "cache_generation_timing": {
-            "source": "in_process_monotonic",
-            "generation_seconds": 100.0,
-        },
-        "projection": {
-            "projected_pod_hours": 2.9,
-            "cache_generation_seconds": 100.0,
-        },
+        exit_refs.append(
+            {
+                "worker_index": index,
+                "path": f"timing_workers/exit_{index}.json",
+                "sha256": runner.file_sha256(exit_path),
+                "exit_code": 0,
+            }
+        )
+    starts = [worker["measurement_started_monotonic_seconds"] for worker in workers]
+    barrier = {
+        "synchronized": True,
+        "start_path": "timing_barrier/start.json",
+        "start_sha256": start_hash,
+        "common_identity_sha256": start["common_identity_sha256"],
+        "ready_reports": [],
+        "start_monotonic_seconds": 10.0,
+        "observed_start_skew_seconds": max(starts) - min(starts),
+        "maximum_start_skew_seconds": 5.0,
     }
-    (tmp_path / "timing_smoke.json").write_text(json.dumps(report))
+    report = runner._assemble_timing_smoke_report(
+        config,
+        resolved=resolved,
+        worker_reports=workers,
+        worker_report_refs=worker_refs,
+        worker_exit_refs=exit_refs,
+        barrier=barrier,
+    )
+    runner.atomic_json(tmp_path / "timing_smoke.json", report)
+    monkeypatch.setattr(runner, "load_resolved", lambda *_args: resolved)
+    monkeypatch.setattr(runner, "_load_timing_fleet", lambda *_args: (workers, start, []))
 
     assert runner.verify_timing_smoke_gate(config, tmp_path) == report
-    report["names_and_concept_results_suppressed"] = False
-    (tmp_path / "timing_smoke.json").write_text(json.dumps(report))
-    with pytest.raises(RuntimeError, match="names_and_concept_results_suppressed"):
+    report["dataset"] = "forbidden"
+    runner.atomic_json(tmp_path / "timing_smoke.json", report)
+    with pytest.raises(RuntimeError, match="privacy boundary"):
         runner.verify_timing_smoke_gate(config, tmp_path)
 
 
@@ -372,53 +562,92 @@ def test_timing_gate_rejects_obsolete_six_job_schema(tmp_path: Path):
         )
     )
 
-    with pytest.raises(RuntimeError, match="schema_version"):
+    with pytest.raises(RuntimeError, match="schema|privacy"):
         runner.verify_timing_smoke_gate(config, tmp_path)
 
 
-def test_timing_thread_quota_uses_four_way_cpu_affinity(monkeypatch):
+def test_timing_thread_quota_uses_cgroup_effective_budget(monkeypatch):
     config = runner.load_config()
-    monkeypatch.setattr(runner.os, "sched_getaffinity", lambda _pid: set(range(12)), raising=False)
+    monkeypatch.setattr(
+        runner,
+        "resolve_cpu_budget",
+        lambda _workers: CpuBudget(128, 32.3, 32, 4, 8),
+    )
     for name in (
+        "LOKY_MAX_CPU_COUNT",
         "OMP_NUM_THREADS",
         "MKL_NUM_THREADS",
         "OPENBLAS_NUM_THREADS",
         "NUMEXPR_NUM_THREADS",
     ):
-        monkeypatch.setenv(name, "3")
+        monkeypatch.setenv(name, "32" if name == "LOKY_MAX_CPU_COUNT" else "8")
 
     observed = runner._timing_thread_quota(config)
 
-    assert observed["visible_cpu_count"] == 12
-    assert observed["threads_per_worker"] == 3
+    assert observed["visible_cpu_count"] == 128
+    assert observed["cgroup_quota_cores"] == 32.3
+    assert observed["effective_cpu_count"] == 32
+    assert observed["threads_per_worker"] == 8
 
 
 def test_timing_projection_uses_the_slowest_exact_worker_shard():
     config = runner.load_config()
-    rows = [
-        {
-            "total_seconds": 13.0,
-            "stage_seconds": {
-                "sparse_method_0": {"total": 1.0},
-                "sparse_method_1": {"total": 2.0},
-                "companion": {"total": 10.0},
-            },
-        }
-        for _ in range(8)
-    ]
+    workers = [_timing_worker(config, index) for index in range(4)]
+    workers[3] = _timing_worker(config, 3, multiplier=2.0)
 
-    projection = runner._project_timing_smoke(config, rows, cache_generation_seconds=100.0)
+    projection = runner._project_timing_smoke(
+        config, workers, cache_generation_seconds=100.0
+    )
 
-    expected_slowest_seconds = 113 * (5 * 1.0 + 3 * 10.0) * 1.3
-    assert projection["worker_projections"][0][
+    expected_slowest_seconds = 113 * (5 * 2.0 * 2.0 + 2 * 3.0 * 2.0) * 1.3
+    assert projection["worker_projections"][3][
         "p95_workload_seconds_with_headroom"
     ] == pytest.approx(expected_slowest_seconds)
+    assert projection["aggregation"] == "slowest_measured_worker"
+    assert projection["slowest_worker_index"] == 3
+    assert projection["maximum_initialization_seconds"] == 7.0
     assert projection["projected_workload_seconds_with_headroom"] == pytest.approx(
         expected_slowest_seconds
     )
     assert projection["projected_pod_hours"] == pytest.approx(
-        (100.0 + expected_slowest_seconds) / 3600
+        (100.0 + 7.0 + expected_slowest_seconds) / 3600
     )
+
+    with pytest.raises(ValueError, match="isolated or pooled"):
+        runner._project_timing_smoke(
+            config, workers[:1], cache_generation_seconds=100.0
+        )
+
+
+def test_timing_worker_rejects_extra_concept_facing_fields():
+    config = runner.load_config()
+    worker = _timing_worker(config, 0)
+    worker["dataset"] = "forbidden_task_name"
+
+    with pytest.raises(RuntimeError, match="privacy boundary"):
+        runner._validate_timing_worker_report(config, worker, worker_index=0)
+
+
+def test_barrier_rejects_coordinated_common_identity_tampering(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    config = runner.load_config()
+    workers = [_timing_worker(config, index) for index in range(4)]
+    expected = runner._timing_common_identity(workers[0])
+    barrier_root = tmp_path / "timing_barrier"
+    barrier_root.mkdir()
+    for index, worker in enumerate(workers):
+        ready = {key: worker[key] for key in runner._TIMING_READY_KEYS}
+        ready["cache_ready_sha256"] = "0" * 64
+        runner.atomic_json(barrier_root / f"ready_{index}.json", ready)
+    monkeypatch.setattr(
+        runner,
+        "_expected_timing_common_identity",
+        lambda *_args, **_kwargs: expected,
+    )
+
+    with pytest.raises(RuntimeError, match="frozen and live artifacts"):
+        runner.start_timing_barrier(config, tmp_path, timeout_seconds=0.1)
 
 
 def test_external_cold_cache_timing_is_hash_bound_recorded_and_projected(
@@ -455,41 +684,20 @@ def test_external_cold_cache_timing_is_hash_bound_recorded_and_projected(
         model_cache=model_cache,
         provenance_path=provenance_path,
     )
-    rows = [
-        {
-            "total_seconds": 13.0,
-            "stage_seconds": {
-                "sparse_method_0": {"total": 1.0},
-                "sparse_method_1": {"total": 2.0},
-                "companion": {"total": 10.0},
-            },
-        }
-        for _ in range(8)
-    ]
-    report = runner._assemble_timing_smoke_report(
-        config,
-        resolved={
-            "config_digest": runner.canonical_digest(config),
-            "artifact_hashes": {"models_sha256": "model"},
-        },
-        rows=rows,
-        selection_digest="selection",
-        thread_quota={"threads_per_worker": 1},
-        cache_generation_timing=timing,
+    workers = [_timing_worker(config, index) for index in range(4)]
+    projection = runner._project_timing_smoke(
+        config, workers, cache_generation_seconds=timing["generation_seconds"]
     )
-    runner.atomic_json(tmp_path / "timing_smoke.json", report)
-    observed = runner.read_json(tmp_path / "timing_smoke.json")
 
-    expected_workload = 113 * (5 * 1.0 + 3 * 10.0) * 1.3
-    assert observed["cache_generation_timing"]["generation_seconds"] == 1506
-    assert observed["cache_generation_timing"]["provenance_sha256"] == runner.file_sha256(
+    expected_workload = 113 * (5 * 2.0 + 2 * 3.0) * 1.3
+    assert timing["generation_seconds"] == 1506
+    assert timing["provenance_sha256"] == runner.file_sha256(
         provenance_path
     )
-    assert observed["projection"]["cache_generation_seconds"] == 1506
-    assert observed["projection"]["projected_pod_hours"] == pytest.approx(
-        (1506 + expected_workload) / 3600
+    assert projection["cache_generation_seconds"] == 1506
+    assert projection["projected_pod_hours"] == pytest.approx(
+        (1506 + 7.0 + expected_workload) / 3600
     )
-    assert runner.verify_timing_smoke_gate(config, tmp_path) == observed
 
 
 def test_prepare_cache_adopts_prior_manifest_only_with_bound_provenance(
@@ -581,6 +789,7 @@ def test_worker_reuses_two_adapters_and_runs_sparse_before_companion(tmp_path: P
 
     monkeypatch.setattr(runner, "wait_cache", lambda **_kwargs: {"ready": True})
     monkeypatch.setattr(runner, "verify_timing_smoke_gate", lambda *_args, **_kwargs: timing_report)
+    monkeypatch.setattr(runner, "_timing_thread_quota", lambda *_args: _runtime_resources())
 
     def fake_load_adapter(_config, _checkpoint_dir, method, _device):
         loaded.append(method)

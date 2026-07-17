@@ -146,10 +146,38 @@ if [[ "$OBSERVED_CONFIG_SHA256" != "$EXPECTED_CONFIG_SHA256" ]]; then
 fi
 EXPECTED_PROBE_SEED="$(jq -er '.runtime.timing_smoke.probe_seed | select(type == "number")' "$CONFIG")"
 EXPECTED_TASK_COUNT="$(jq -er '.runtime.timing_smoke.task_count | select(type == "number")' "$CONFIG")"
+EXPECTED_TIMING_TOPOLOGY="$(jq -er '.runtime.timing_smoke.topology_mode | select(type == "string")' "$CONFIG")"
+EXPECTED_MEASURED_WORKERS="$(jq -er '.runtime.timing_smoke.measured_worker_count | select(type == "number")' "$CONFIG")"
+EXPECTED_MAXIMUM_START_SKEW="$(jq -er '.runtime.timing_smoke.maximum_start_skew_seconds | select(type == "number")' "$CONFIG")"
 EXPECTED_MAXIMUM_POD_HOURS="$(jq -er '.runtime.timing_smoke.maximum_projected_pod_hours | select(type == "number")' "$CONFIG")"
 EXPECTED_MATRIX_FORMAT="$(jq -er '.benchmark.companion_full_code_matrix_format | select(type == "string")' "$CONFIG")"
 EXPECTED_L2_OPTIMIZATION="$(jq -er '.benchmark.companion_l2_path_optimization | select(type == "string")' "$CONFIG")"
 EXPECTED_COLD_C_JOBS="$(jq -er '.runtime.companion_full_code_cold_C_jobs_per_worker | select(type == "number")' "$CONFIG")"
+EXPECTED_WORKER_COUNT="$(jq -er '.runtime.worker_count | select(type == "number")' "$CONFIG")"
+EXPECTED_CGROUP_QUOTA_CORES="$(jq -er '.runtime.resource_identity.cgroup_quota_cores | select(type == "number")' "$CONFIG")"
+EXPECTED_EFFECTIVE_CPU_COUNT="$(jq -er '.runtime.resource_identity.effective_cpu_count | select(type == "number")' "$CONFIG")"
+EXPECTED_THREADS_PER_WORKER="$(jq -er '.runtime.resource_identity.threads_per_worker | select(type == "number")' "$CONFIG")"
+
+OBSERVED_CPU_BUDGET="$(
+  PYTHONPATH="$ROOT/src:$ROOT:$SAEBENCH_ROOT" \
+    "$PYTHON" -m dpsae.cpu_quota json --workers "$EXPECTED_WORKER_COUNT"
+)"
+if ! jq -e \
+  --argjson worker_count "$EXPECTED_WORKER_COUNT" \
+  --argjson cgroup_quota_cores "$EXPECTED_CGROUP_QUOTA_CORES" \
+  --argjson effective_cpu_count "$EXPECTED_EFFECTIVE_CPU_COUNT" \
+  --argjson threads_per_worker "$EXPECTED_THREADS_PER_WORKER" \
+  '
+    .worker_count == $worker_count
+    and .cgroup_quota_cores == $cgroup_quota_cores
+    and .effective_cpu_count == $effective_cpu_count
+    and .threads_per_worker == $threads_per_worker
+    and (.visible_cpu_count | type == "number")
+    and .visible_cpu_count >= $effective_cpu_count
+  ' <<< "$OBSERVED_CPU_BUDGET" >/dev/null; then
+  echo "live cgroup CPU budget differs from the frozen Exp10 runtime identity" >&2
+  exit 2
+fi
 
 mapfile -t WORKER_DONE_PATHS < <(
   jq -r --arg output_root "$OUTPUT_ROOT" '
@@ -182,22 +210,58 @@ if ! jq -e \
   --argjson cold_c_jobs "$EXPECTED_COLD_C_JOBS" \
   --argjson probe_seed "$EXPECTED_PROBE_SEED" \
   --argjson task_count "$EXPECTED_TASK_COUNT" \
+  --arg timing_topology "$EXPECTED_TIMING_TOPOLOGY" \
+  --argjson measured_workers "$EXPECTED_MEASURED_WORKERS" \
+  --argjson maximum_start_skew "$EXPECTED_MAXIMUM_START_SKEW" \
   --argjson maximum_pod_hours "$EXPECTED_MAXIMUM_POD_HOURS" \
+  --argjson worker_count "$EXPECTED_WORKER_COUNT" \
+  --argjson cgroup_quota_cores "$EXPECTED_CGROUP_QUOTA_CORES" \
+  --argjson effective_cpu_count "$EXPECTED_EFFECTIVE_CPU_COUNT" \
+  --argjson threads_per_worker "$EXPECTED_THREADS_PER_WORKER" \
   '
-    .schema_version == 5
+    .schema_version == 6
     and .complete == true
     and .config_digest == $config_digest
     and .probe_seed == $probe_seed
     and .task_count == $task_count
+    and .measured_worker_count == $measured_workers
+    and .measured_task_count == ($measured_workers * $task_count)
+    and .topology.mode == $timing_topology
+    and .topology.measured_worker_count == $measured_workers
+    and .topology.tasks_per_worker == $task_count
+    and .topology.same_task_set_per_worker == true
+    and .topology.barrier_synchronized == true
+    and .barrier.synchronized == true
+    and .barrier.maximum_start_skew_seconds == $maximum_start_skew
+    and (.barrier.observed_start_skew_seconds | type == "number")
+    and .barrier.observed_start_skew_seconds <= $maximum_start_skew
+    and (.barrier.ready_reports | length) == $measured_workers
+    and (.timing_worker_reports | length) == $measured_workers
+    and (.timing_worker_exit_sentinels | length) == $measured_workers
+    and (.cgroup_cpu_stat_deltas | length) == $measured_workers
     and .names_and_concept_results_suppressed == true
     and .saved_concept_metric_count == 0
     and .companion_full_code_matrix_format == $matrix_format
     and .companion_l2_path_optimization == $l2_optimization
     and .companion_full_code_cold_C_jobs_per_worker == $cold_c_jobs
+    and .runtime_resources.worker_count == $worker_count
+    and .runtime_resources.cgroup_quota_cores == $cgroup_quota_cores
+    and .runtime_resources.effective_cpu_count == $effective_cpu_count
+    and .runtime_resources.threads_per_worker == $threads_per_worker
+    and (.runtime_resources.visible_cpu_count | type == "number")
+    and .runtime_resources.visible_cpu_count >= $effective_cpu_count
+    and .runtime_resources.environment.LOKY_MAX_CPU_COUNT == ($effective_cpu_count | tostring)
+    and .runtime_resources.environment.OMP_NUM_THREADS == ($threads_per_worker | tostring)
+    and .runtime_resources.environment.MKL_NUM_THREADS == ($threads_per_worker | tostring)
+    and .runtime_resources.environment.OPENBLAS_NUM_THREADS == ($threads_per_worker | tostring)
+    and .runtime_resources.environment.NUMEXPR_NUM_THREADS == ($threads_per_worker | tostring)
+    and .projection.aggregation == "slowest_measured_worker"
+    and .projection.initialization_accounting == "maximum_pre_barrier_initialization_added_once"
+    and (.projection.maximum_initialization_seconds | type == "number")
     and (.projection.projected_pod_hours | type == "number")
     and (.passed == (.projection.projected_pod_hours <= $maximum_pod_hours))
   ' "$TIMING_REPORT" >/dev/null; then
-  write_status "timing_gate" "error" "blind timing report failed schema-v5/config/runtime identity checks"
+  write_status "timing_gate" "error" "blind timing report failed schema-v6/config/runtime identity checks"
   exit 1
 fi
 if ! jq -e '.passed == true' "$TIMING_REPORT" >/dev/null; then

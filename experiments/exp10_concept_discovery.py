@@ -29,6 +29,7 @@ import numpy as np
 import torch
 from torch import Tensor
 
+from dpsae.cpu_quota import resolve_cpu_budget
 from dpsae.saebench_adapter import (
     NativeBatchTopKSAEBenchAdapter,
     load_native_saebench_adapter,
@@ -138,6 +139,19 @@ def load_config(path: Path = DEFAULT_CONFIG) -> dict[str, Any]:
         raise ValueError("one-based block and TransformerLens hook disagree")
     if config["adapter"]["decoder_renormalization"] != "forbidden":
         raise ValueError("exp10 forbids adapter-side decoder renormalization")
+    source_files = config.get("provenance", {}).get("source_files")
+    required_source_files = {
+        "configs/exp10_concept_discovery.json",
+        "experiments/exp10_concept_discovery.py",
+        "src/dpsae/saebench_adapter.py",
+        "src/dpsae/cpu_quota.py",
+        "scripts/audit_exp10_artifacts.py",
+        "scripts/run_exp10_concept_4xa40.sh",
+        "scripts/run_exp10_timing_smoke_a40.sh",
+        "scripts/run_steps1_4_autonomous_runpod.sh",
+    }
+    if not isinstance(source_files, list) or set(source_files) != required_source_files:
+        raise ValueError("exp10 provenance source_files changed")
     if benchmark.get("saebench_include_llm_baseline") is not False:
         raise ValueError(
             "SAEBench's duplicate residual baseline must remain disabled; the companion "
@@ -149,8 +163,19 @@ def load_config(path: Path = DEFAULT_CONFIG) -> dict[str, Any]:
         raise ValueError("exp10 requires exactly four frozen sparse worker shards")
     if len(runtime["companion_seed_shards"]) != worker_count:
         raise ValueError("exp10 requires exactly four frozen companion seed shards")
-    if int(runtime.get("companion_full_code_cold_C_jobs_per_worker", 0)) != 10:
-        raise ValueError("exp10 requires ten independent cold-C jobs per full-code worker")
+    if int(runtime.get("companion_full_code_cold_C_jobs_per_worker", 0)) != 8:
+        raise ValueError("exp10 requires eight parallel cold-C jobs per full-code worker")
+    if runtime.get("thread_quota_policy") != (
+        "floor_effective_cpu_count_divided_by_worker_count"
+    ):
+        raise ValueError("exp10 must derive thread quotas from the effective cgroup CPU budget")
+    expected_resources = runtime.get("resource_identity")
+    if expected_resources != {
+        "cgroup_quota_cores": 32.3,
+        "effective_cpu_count": 32,
+        "threads_per_worker": 8,
+    }:
+        raise ValueError("exp10 runtime resource identity changed")
     sparse_pairs = [
         (shard["method"], int(seed))
         for shard in runtime["sparse_worker_shards"]
@@ -170,6 +195,11 @@ def load_config(path: Path = DEFAULT_CONFIG) -> dict[str, Any]:
         != "in_process_monotonic_or_hash_bound_external_provenance"
         or int(smoke["probe_seed"]) in seeds
         or int(smoke["task_count"]) != 8
+        or smoke.get("topology_mode") != "four_worker_same_tasks"
+        or int(smoke.get("measured_worker_count", 0)) != worker_count
+        or smoke.get("same_task_set_per_worker") is not True
+        or float(smoke.get("barrier_timeout_seconds", 0)) <= 0
+        or float(smoke.get("maximum_start_skew_seconds", 0)) <= 0
         or int(smoke["quartile_count"]) != 4
         or int(smoke["tasks_per_quartile"]) != 2
         or float(smoke["headroom_multiplier"]) != 1.3
@@ -489,15 +519,19 @@ def verify_saebench_environment(config: Mapping[str, Any], saebench_root: Path) 
 
 
 def source_hashes(config_path: Path) -> dict[str, str]:
-    paths = [
-        config_path if config_path.is_absolute() else ROOT / config_path,
-        Path(__file__).resolve(),
-        ROOT / "src/dpsae/saebench_adapter.py",
-        ROOT / "scripts/audit_exp10_artifacts.py",
-        ROOT / "scripts/run_exp10_concept_4xa40.sh",
-        ROOT / "scripts/run_exp10_timing_smoke_a40.sh",
-    ]
+    resolved_config = config_path if config_path.is_absolute() else ROOT / config_path
+    config = read_json(resolved_config)
+    source_files = config.get("provenance", {}).get("source_files")
+    if not isinstance(source_files, list) or not source_files:
+        raise ValueError("exp10 provenance requires a nonempty source_files list")
+    if len(source_files) != len(set(source_files)):
+        raise ValueError("exp10 provenance source_files must be unique")
+    paths = [ROOT / str(path) for path in source_files]
+    if resolved_config.resolve() not in [path.resolve() for path in paths]:
+        raise ValueError("exp10 provenance source_files must include its config")
     resolved = [path.resolve() for path in paths]
+    if any(ROOT not in path.parents for path in resolved):
+        raise ValueError("exp10 provenance source_files must remain inside the repository")
     return {str(path.relative_to(ROOT)): file_sha256(path) for path in resolved}
 
 
@@ -1466,29 +1500,84 @@ def _peak_rss_mib() -> float:
 
 
 def _timing_thread_quota(config: Mapping[str, Any]) -> dict[str, Any]:
-    if hasattr(os, "sched_getaffinity"):
-        cpu_count = len(os.sched_getaffinity(0))
-    else:
-        cpu_count = int(os.cpu_count() or 1)
     worker_count = int(config["runtime"]["worker_count"])
-    expected = max(1, cpu_count // worker_count)
+    budget = asdict(resolve_cpu_budget(worker_count))
+    _validate_cpu_budget(config, budget, label="live runtime")
     variables = (
+        "LOKY_MAX_CPU_COUNT",
         "OMP_NUM_THREADS",
         "MKL_NUM_THREADS",
         "OPENBLAS_NUM_THREADS",
         "NUMEXPR_NUM_THREADS",
     )
     observed = {name: os.environ.get(name) for name in variables}
-    if any(value is None or int(value) != expected for value in observed.values()):
-        raise RuntimeError(
-            f"timing smoke requires every BLAS/OpenMP thread cap to equal {expected}: {observed}"
-        )
-    return {
-        "visible_cpu_count": cpu_count,
-        "worker_count": worker_count,
-        "threads_per_worker": expected,
-        "environment": observed,
+    expected_environment = {
+        "LOKY_MAX_CPU_COUNT": str(budget["effective_cpu_count"]),
+        "OMP_NUM_THREADS": str(budget["threads_per_worker"]),
+        "MKL_NUM_THREADS": str(budget["threads_per_worker"]),
+        "OPENBLAS_NUM_THREADS": str(budget["threads_per_worker"]),
+        "NUMEXPR_NUM_THREADS": str(budget["threads_per_worker"]),
     }
+    if observed != expected_environment:
+        raise RuntimeError(
+            "runtime thread-cap identity mismatch: "
+            f"expected {expected_environment}, observed {observed}"
+        )
+    return {**budget, "environment": observed}
+
+
+def _validate_cpu_budget(
+    config: Mapping[str, Any], value: Any, *, label: str
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise RuntimeError(f"{label} CPU budget is missing")
+    budget = dict(value)
+    expected_keys = {
+        "visible_cpu_count",
+        "cgroup_quota_cores",
+        "effective_cpu_count",
+        "worker_count",
+        "threads_per_worker",
+    }
+    if set(budget) != expected_keys:
+        raise RuntimeError(f"{label} CPU budget schema drift")
+    expected = config["runtime"]["resource_identity"]
+    for key in ("cgroup_quota_cores", "effective_cpu_count", "threads_per_worker"):
+        if budget.get(key) != expected[key]:
+            raise RuntimeError(
+                f"{label} CPU resource drift for {key}: "
+                f"expected {expected[key]!r}, observed {budget.get(key)!r}"
+            )
+    worker_count = int(config["runtime"]["worker_count"])
+    if budget.get("worker_count") != worker_count:
+        raise RuntimeError(f"{label} CPU worker count drift")
+    visible = budget.get("visible_cpu_count")
+    if not isinstance(visible, int) or isinstance(visible, bool) or visible < int(
+        expected["effective_cpu_count"]
+    ):
+        raise RuntimeError(f"{label} visible CPU count is incompatible")
+    return budget
+
+
+def _validate_reported_runtime_resources(
+    config: Mapping[str, Any], value: Any
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise RuntimeError("timing-smoke runtime_resources is missing")
+    resources = dict(value)
+    budget = {key: resources.get(key) for key in resources if key != "environment"}
+    _validate_cpu_budget(config, budget, label="timing-smoke")
+    expected = config["runtime"]["resource_identity"]
+    expected_environment = {
+        "LOKY_MAX_CPU_COUNT": str(expected["effective_cpu_count"]),
+        "OMP_NUM_THREADS": str(expected["threads_per_worker"]),
+        "MKL_NUM_THREADS": str(expected["threads_per_worker"]),
+        "OPENBLAS_NUM_THREADS": str(expected["threads_per_worker"]),
+        "NUMEXPR_NUM_THREADS": str(expected["threads_per_worker"]),
+    }
+    if resources.get("environment") != expected_environment:
+        raise RuntimeError("timing-smoke thread-cap environment drift")
+    return resources
 
 
 def _cache_file_hashes_digest(cache: Mapping[str, Any]) -> str:
@@ -1686,130 +1775,484 @@ def _resolve_cache_generation_timing(
     }
 
 
-def _project_timing_smoke(
-    config: Mapping[str, Any],
-    rows: Sequence[Mapping[str, Any]],
-    *,
-    cache_generation_seconds: float,
-) -> dict[str, Any]:
-    if not rows:
-        raise ValueError("timing projection requires at least one measured task")
-    smoke = config["runtime"]["timing_smoke"]
-    method_slots = {"mse": "sparse_method_0", "dpsae": "sparse_method_1"}
-    component_p95_seconds = {
-        slot: float(
-            np.quantile(
-                np.asarray(
-                    [row["stage_seconds"][slot]["total"] for row in rows],
-                    dtype=np.float64,
-                ),
-                0.95,
-            )
-        )
-        for slot in (*method_slots.values(), "companion")
-    }
-    pair_units = int(smoke["projection_pair_units"])
-    dataset_count = len(config["benchmark"]["datasets"])
-    expected_pair_units = dataset_count * len(config["benchmark"]["probe_seeds"])
-    if pair_units != expected_pair_units:
-        raise RuntimeError("timing projection units differ from the frozen dataset-seed grid")
-    headroom = float(smoke["headroom_multiplier"])
-    worker_projections = []
-    for worker_index, sparse_shard in enumerate(config["runtime"]["sparse_worker_shards"]):
-        sparse_slot = method_slots[sparse_shard["method"]]
-        sparse_seed_count = len(sparse_shard["probe_seeds"])
-        companion_seed_count = len(config["runtime"]["companion_seed_shards"][worker_index])
-        unpadded_seconds = dataset_count * (
-            sparse_seed_count * component_p95_seconds[sparse_slot]
-            + companion_seed_count * component_p95_seconds["companion"]
-        )
-        worker_projections.append(
-            {
-                "worker_index": worker_index,
-                "sparse_slot": sparse_slot,
-                "sparse_seed_count": sparse_seed_count,
-                "companion_seed_count": companion_seed_count,
-                "p95_workload_seconds": unpadded_seconds,
-                "p95_workload_seconds_with_headroom": unpadded_seconds * headroom,
-            }
-        )
-    projected_workload_seconds = max(
-        item["p95_workload_seconds_with_headroom"] for item in worker_projections
-    )
-    projected_pod_hours = (float(cache_generation_seconds) + projected_workload_seconds) / 3600
-    task_p95_seconds = float(
-        np.quantile(
-            np.asarray([row["total_seconds"] for row in rows], dtype=np.float64),
-            0.95,
-        )
-    )
+def _timing_topology(config: Mapping[str, Any]) -> dict[str, Any]:
+    runtime = config["runtime"]
+    smoke = runtime["timing_smoke"]
     return {
-        "task_p95_seconds": task_p95_seconds,
-        "component_p95_seconds": component_p95_seconds,
-        "headroom_multiplier": headroom,
-        "dataset_count": dataset_count,
-        "pair_units": pair_units,
-        "worker_projections": worker_projections,
-        "cache_generation_seconds": float(cache_generation_seconds),
-        "projected_workload_seconds_with_headroom": projected_workload_seconds,
-        "projected_pod_hours": projected_pod_hours,
-        "maximum_projected_pod_hours": float(smoke["maximum_projected_pod_hours"]),
+        "mode": smoke["topology_mode"],
+        "measured_worker_count": int(smoke["measured_worker_count"]),
+        "tasks_per_worker": int(smoke["task_count"]),
+        "same_task_set_per_worker": bool(smoke["same_task_set_per_worker"]),
+        "barrier_synchronized": True,
+        "cold_c_jobs_per_worker": int(runtime["companion_full_code_cold_C_jobs_per_worker"]),
+        "parent_threads_per_worker": int(runtime["resource_identity"]["threads_per_worker"]),
+        "loky_inner_max_num_threads": 1,
     }
 
 
-def _assemble_timing_smoke_report(
-    config: Mapping[str, Any],
-    *,
-    resolved: Mapping[str, Any],
-    rows: Sequence[Mapping[str, Any]],
-    selection_digest: str,
-    thread_quota: Mapping[str, Any],
-    cache_generation_timing: Mapping[str, Any],
-) -> dict[str, Any]:
+def _read_cgroup_cpu_stat() -> dict[str, Any]:
+    candidates = [Path("/sys/fs/cgroup/cpu.stat")]
+    membership = Path("/proc/self/cgroup")
+    if membership.is_file():
+        for line in membership.read_text().splitlines():
+            fields = line.split(":", 2)
+            if len(fields) != 3:
+                continue
+            controllers = fields[1].split(",") if fields[1] else []
+            relative = fields[2].lstrip("/")
+            if not controllers:
+                candidates.append(Path("/sys/fs/cgroup") / relative / "cpu.stat")
+            elif "cpu" in controllers:
+                for mount in ("cpu", "cpu,cpuacct"):
+                    candidates.append(Path("/sys/fs/cgroup") / mount / relative / "cpu.stat")
+    candidates.extend(
+        [
+            Path("/sys/fs/cgroup/cpu/cpu.stat"),
+            Path("/sys/fs/cgroup/cpu,cpuacct/cpu.stat"),
+        ]
+    )
+    for path in dict.fromkeys(candidates):
+        if not path.is_file():
+            continue
+        counters: dict[str, int] = {}
+        for line in path.read_text().splitlines():
+            fields = line.split()
+            if len(fields) == 2:
+                counters[fields[0]] = int(fields[1])
+        if {"nr_periods", "nr_throttled"}.issubset(counters) and (
+            "throttled_time" in counters or "throttled_usec" in counters
+        ):
+            return {"path": str(path.resolve()), "counters": counters}
+    raise RuntimeError("cgroup cpu.stat with throttling counters is unavailable")
+
+
+def _cgroup_cpu_stat_delta(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict[str, Any]:
+    if before.get("path") != after.get("path"):
+        raise RuntimeError("cgroup cpu.stat path changed during timing")
+    start = dict(before.get("counters", {}))
+    end = dict(after.get("counters", {}))
+    if set(start) != set(end):
+        raise RuntimeError("cgroup cpu.stat counter schema changed during timing")
+    delta = {key: int(end[key]) - int(start[key]) for key in start}
+    if any(value < 0 for value in delta.values()):
+        raise RuntimeError("cgroup cpu.stat counter decreased during timing")
+    return {"path": before["path"], "before": start, "after": end, "delta": delta}
+
+
+def _validate_cgroup_cpu_stat_delta(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != {"path", "before", "after", "delta"}:
+        raise RuntimeError("timing worker cgroup cpu.stat delta schema drift")
+    if not isinstance(value["path"], str) or not value["path"]:
+        raise RuntimeError("timing worker cgroup cpu.stat path is invalid")
+    before, after, delta = value["before"], value["after"], value["delta"]
+    if not all(isinstance(item, Mapping) for item in (before, after, delta)):
+        raise RuntimeError("timing worker cgroup cpu.stat counters are invalid")
+    if set(before) != set(after) or set(before) != set(delta):
+        raise RuntimeError("timing worker cgroup cpu.stat counter sets differ")
+    if not {"nr_periods", "nr_throttled"}.issubset(delta) or not (
+        "throttled_time" in delta or "throttled_usec" in delta
+    ):
+        raise RuntimeError("timing worker cgroup cpu.stat lacks throttling counters")
+    for key in delta:
+        if any(
+            not isinstance(item[key], int) or isinstance(item[key], bool)
+            for item in (before, after, delta)
+        ):
+            raise RuntimeError("timing worker cgroup cpu.stat counter is not integral")
+        if after[key] - before[key] != delta[key] or delta[key] < 0:
+            raise RuntimeError("timing worker cgroup cpu.stat delta is inconsistent")
+    if delta["nr_periods"] <= 0:
+        raise RuntimeError("timing worker cgroup cpu.stat observed no active quota periods")
+    return dict(value)
+
+
+_TIMING_TASK_KEYS = {
+    "slot",
+    "quartile",
+    "n_train",
+    "n_test",
+    "stage_seconds",
+    "total_seconds",
+    "peak_rss_mib",
+    "peak_gpu_allocated_bytes",
+    "peak_gpu_reserved_bytes",
+}
+_SPARSE_TIMING_STAGE_KEYS = {
+    "primary_data_load",
+    "primary_encode",
+    "primary_l1",
+    "provenance_data_load",
+    "provenance_encode",
+    "provenance_l1",
+    "total",
+}
+_COMPANION_TIMING_STAGE_KEYS = {
+    "data_load",
+    "encode_decode",
+    "original_l2",
+    "full_code_l2",
+    "reconstruction_l2",
+    "total",
+}
+_TIMING_READY_KEYS = {
+    "schema_version",
+    "complete",
+    "worker_index",
+    "config_digest",
+    "artifact_hashes",
+    "source_hashes_sha256",
+    "dependency_environment_sha256",
+    "cache_ready_sha256",
+    "cache_file_hashes_sha256",
+    "selection_manifest_sha256",
+    "selected_opaque_slots",
+    "runtime_resources",
+    "cpu_budget_sha256",
+    "cache_generation_timing",
+    "topology",
+    "initialization_seconds",
+    "ready_monotonic_seconds",
+}
+_TIMING_WORKER_KEYS = _TIMING_READY_KEYS | {
+    "barrier_start_sha256",
+    "barrier_start_monotonic_seconds",
+    "measurement_started_monotonic_seconds",
+    "measurement_finished_monotonic_seconds",
+    "measurement_seconds",
+    "task_count",
+    "names_and_concept_results_suppressed",
+    "saved_concept_metric_count",
+    "cgroup_cpu_stat_delta",
+    "tasks",
+}
+_TIMING_START_KEYS = {
+    "schema_version",
+    "complete",
+    "topology",
+    "worker_count",
+    "common_identity_sha256",
+    "start_monotonic_seconds",
+    "start_unix_seconds",
+    "ready_reports",
+}
+_TIMING_EXIT_KEYS = {
+    "schema_version",
+    "complete",
+    "worker_index",
+    "exit_code",
+    "worker_report_sha256",
+}
+_TIMING_REPORT_KEYS = {
+    "schema_version",
+    "complete",
+    "passed",
+    "config_digest",
+    "artifact_hashes",
+    "source_hashes_sha256",
+    "probe_seed",
+    "task_count",
+    "measured_task_count",
+    "measured_worker_count",
+    "topology",
+    "selection_policy",
+    "selection_manifest_sha256",
+    "names_and_concept_results_suppressed",
+    "saved_concept_metric_count",
+    "companion_full_code_matrix_format",
+    "companion_l2_path_optimization",
+    "companion_full_code_cold_C_jobs_per_worker",
+    "runtime_resources",
+    "cpu_budget_sha256",
+    "cache_generation_timing",
+    "timing_worker_reports",
+    "timing_worker_exit_sentinels",
+    "barrier",
+    "cgroup_cpu_stat_deltas",
+    "projection",
+}
+_TIMING_BARRIER_PROOF_KEYS = {
+    "synchronized",
+    "start_path",
+    "start_sha256",
+    "common_identity_sha256",
+    "ready_reports",
+    "start_monotonic_seconds",
+    "observed_start_skew_seconds",
+    "maximum_start_skew_seconds",
+}
+
+
+def _validate_timing_rows(config: Mapping[str, Any], rows: Any) -> list[dict[str, Any]]:
     smoke = config["runtime"]["timing_smoke"]
-    projection = _project_timing_smoke(
+    if not isinstance(rows, list) or len(rows) != int(smoke["task_count"]):
+        raise RuntimeError("timing worker must contain exactly eight opaque task rows")
+    observed: list[dict[str, Any]] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, Mapping) or set(row) != _TIMING_TASK_KEYS:
+            raise RuntimeError("timing task row schema or privacy boundary drift")
+        expected_slot = f"quartile_{index // 2}_sample_{index % 2}"
+        if row.get("slot") != expected_slot or row.get("quartile") != index // 2:
+            raise RuntimeError("timing task opaque slot order drift")
+        if any(
+            not isinstance(row.get(key), int)
+            or isinstance(row.get(key), bool)
+            or int(row[key]) <= 0
+            for key in ("n_train", "n_test")
+        ):
+            raise RuntimeError("timing task sample counts are invalid")
+        stages = row.get("stage_seconds")
+        if not isinstance(stages, Mapping) or set(stages) != {
+            "sparse_method_0",
+            "sparse_method_1",
+            "companion",
+        }:
+            raise RuntimeError("timing task stage schema drift")
+        for name, expected_keys in (
+            ("sparse_method_0", _SPARSE_TIMING_STAGE_KEYS),
+            ("sparse_method_1", _SPARSE_TIMING_STAGE_KEYS),
+            ("companion", _COMPANION_TIMING_STAGE_KEYS),
+        ):
+            stage = stages[name]
+            if not isinstance(stage, Mapping) or set(stage) != expected_keys:
+                raise RuntimeError("timing task component stage schema drift")
+            values = [float(stage[key]) for key in expected_keys]
+            if not all(math.isfinite(item) and item >= 0 for item in values):
+                raise RuntimeError("timing task component contains invalid duration")
+            components = [float(value) for key, value in stage.items() if key != "total"]
+            if not math.isclose(float(stage["total"]), sum(components), rel_tol=1e-9, abs_tol=1e-6):
+                raise RuntimeError("timing task component total is inconsistent")
+        for key in ("total_seconds", "peak_rss_mib"):
+            value = float(row[key])
+            if not math.isfinite(value) or value <= 0:
+                raise RuntimeError("timing task total or RSS is invalid")
+        for key in ("peak_gpu_allocated_bytes", "peak_gpu_reserved_bytes"):
+            if not isinstance(row[key], int) or isinstance(row[key], bool) or row[key] < 0:
+                raise RuntimeError("timing task GPU memory counter is invalid")
+        observed.append(dict(row))
+    return observed
+
+
+def _timing_common_identity(value: Mapping[str, Any]) -> dict[str, Any]:
+    keys = (
+        "config_digest",
+        "artifact_hashes",
+        "source_hashes_sha256",
+        "dependency_environment_sha256",
+        "cache_ready_sha256",
+        "cache_file_hashes_sha256",
+        "selection_manifest_sha256",
+        "selected_opaque_slots",
+        "runtime_resources",
+        "cpu_budget_sha256",
+        "cache_generation_timing",
+        "topology",
+    )
+    return {key: value.get(key) for key in keys}
+
+
+def _expected_selected_slots(config: Mapping[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {"slot": f"quartile_{index // 2}_sample_{index % 2}", "quartile": index // 2}
+        for index in range(int(config["runtime"]["timing_smoke"]["task_count"]))
+    ]
+
+
+def _expected_timing_common_identity(
+    config: Mapping[str, Any], output_root: Path, candidate: Mapping[str, Any]
+) -> dict[str, Any]:
+    resolved = load_resolved(output_root, config)
+    checkpoint_dir = Path(str(resolved.get("checkpoint_directory", "")))
+    if artifact_hashes(config, checkpoint_dir) != resolved.get("artifact_hashes"):
+        raise RuntimeError("resolved checkpoint artifact hashes changed")
+    config_path = Path(str(resolved.get("config_path", "")))
+    observed_source_hashes = source_hashes(config_path)
+    if observed_source_hashes != resolved.get("source_hashes"):
+        raise RuntimeError("resolved source hashes changed")
+    cache_path = output_root / "cache_ready.json"
+    cache = read_json(cache_path)
+    model_cache = Path(str(cache.get("model_cache", "")))
+    _verify_cache_manifest_inputs(config, cache, model_cache)
+    for record in cache["files"].values():
+        cached_path = Path(record["path"])
+        if file_sha256(cached_path) != record.get("sha256"):
+            raise RuntimeError("activation cache content hash changed")
+    cpu_budget_path = output_root / "cpu_budget.json"
+    cpu_budget = _validate_cpu_budget(config, read_json(cpu_budget_path), label="launcher")
+    runtime_resources = _timing_thread_quota(config)
+    if {key: runtime_resources[key] for key in cpu_budget} != cpu_budget:
+        raise RuntimeError("live resources differ from the launcher CPU budget")
+    from sae_probes.run_sae_evals import DATASET_SIZES
+
+    selected = select_timing_smoke_tasks(
         config,
-        rows,
-        cache_generation_seconds=float(cache_generation_timing["generation_seconds"]),
+        {dataset: int(DATASET_SIZES[dataset]) for dataset in config["benchmark"]["datasets"]},
     )
-    passed = projection["projected_pod_hours"] <= float(smoke["maximum_projected_pod_hours"])
+    selection_digest = canonical_digest(
+        [
+            {"slot": item["slot"], "dataset": item["dataset"], "size": item["dataset_size"]}
+            for item in selected
+        ]
+    )
+    dependency_environment = stable_resolved_contract(
+        {"environment": resolved.get("environment", {})}
+    )["environment"]
+    timing_candidate = candidate.get("cache_generation_timing")
+    if not isinstance(timing_candidate, Mapping):
+        raise RuntimeError("timing cache-generation identity is missing")
+    provenance_path = (
+        Path(str(timing_candidate.get("provenance_path")))
+        if timing_candidate.get("source") == "external_hash_bound_provenance"
+        else None
+    )
+    cache_timing = _resolve_cache_generation_timing(
+        cache,
+        output_root=output_root,
+        model_cache=model_cache,
+        provenance_path=provenance_path,
+    )
     return {
-        "schema_version": 5,
-        "complete": True,
-        "passed": passed,
         "config_digest": resolved["config_digest"],
         "artifact_hashes": resolved["artifact_hashes"],
-        "probe_seed": int(smoke["probe_seed"]),
-        "task_count": len(rows),
-        "selection_policy": smoke["selection"],
+        "source_hashes_sha256": canonical_digest(observed_source_hashes),
+        "dependency_environment_sha256": canonical_digest(dependency_environment),
+        "cache_ready_sha256": file_sha256(cache_path),
+        "cache_file_hashes_sha256": _cache_file_hashes_digest(cache),
         "selection_manifest_sha256": selection_digest,
-        "names_and_concept_results_suppressed": True,
-        "saved_concept_metric_count": 0,
-        "companion_full_code_matrix_format": "scipy_csr_exact_values",
-        "companion_l2_path_optimization": (
-            "parallel_independent_cold_C_loky_cold_selected_C_refit"
-        ),
-        "companion_full_code_cold_C_jobs_per_worker": int(
-            config["runtime"]["companion_full_code_cold_C_jobs_per_worker"]
-        ),
-        "thread_quota": dict(thread_quota),
-        "cache_generation_timing": dict(cache_generation_timing),
-        "tasks": list(rows),
-        "projection": projection,
+        "selected_opaque_slots": _expected_selected_slots(config),
+        "runtime_resources": runtime_resources,
+        "cpu_budget_sha256": file_sha256(cpu_budget_path),
+        "cache_generation_timing": cache_timing,
+        "topology": _timing_topology(config),
     }
 
 
-def run_timing_smoke(
+def _timing_ready_path(output_root: Path, worker_index: int) -> Path:
+    return output_root / "timing_barrier" / f"ready_{worker_index}.json"
+
+
+def _timing_worker_path(output_root: Path, worker_index: int) -> Path:
+    return output_root / "timing_workers" / f"worker_{worker_index}.json"
+
+
+def _timing_exit_path(output_root: Path, worker_index: int) -> Path:
+    return output_root / "timing_workers" / f"exit_{worker_index}.json"
+
+
+def _wait_for_timing_start(
+    output_root: Path, ready_path: Path, common_identity_sha256: str, timeout_seconds: float
+) -> dict[str, Any]:
+    start_path = output_root / "timing_barrier" / "start.json"
+    deadline = time.monotonic() + timeout_seconds
+    while not start_path.is_file():
+        if time.monotonic() >= deadline:
+            raise TimeoutError("timed out waiting for the four-worker timing barrier")
+        time.sleep(min(0.25, max(0.01, deadline - time.monotonic())))
+    start = read_json(start_path)
+    refs = start.get("ready_reports")
+    if (
+        set(start) != _TIMING_START_KEYS
+        or start.get("schema_version") != 1
+        or start.get("complete") is not True
+        or start.get("topology") != "four_worker_same_tasks"
+        or start.get("common_identity_sha256") != common_identity_sha256
+        or not isinstance(refs, list)
+        or not any(
+            set(ref) == {"worker_index", "path", "sha256"}
+            and ref.get("path") == str(ready_path.relative_to(output_root))
+            and ref.get("sha256") == file_sha256(ready_path)
+            for ref in refs
+            if isinstance(ref, Mapping)
+        )
+    ):
+        raise RuntimeError("timing barrier start artifact does not authorize this worker")
+    return start
+
+
+def start_timing_barrier(
+    config: Mapping[str, Any], output_root: Path, *, timeout_seconds: float | None = None
+) -> dict[str, Any]:
+    smoke = config["runtime"]["timing_smoke"]
+    worker_count = int(smoke["measured_worker_count"])
+    timeout = float(timeout_seconds or smoke["barrier_timeout_seconds"])
+    start_path = output_root / "timing_barrier" / "start.json"
+    if start_path.exists():
+        raise RuntimeError("timing barrier start artifact already exists; use a fresh timing root")
+    deadline = time.monotonic() + timeout
+    ready_paths = [_timing_ready_path(output_root, index) for index in range(worker_count)]
+    while not all(path.is_file() for path in ready_paths):
+        for index in range(worker_count):
+            exit_path = _timing_exit_path(output_root, index)
+            if exit_path.is_file():
+                sentinel = read_json(exit_path)
+                if sentinel.get("exit_code") != 0:
+                    raise RuntimeError(f"timing worker {index} exited before the barrier")
+        if time.monotonic() >= deadline:
+            missing = [path.name for path in ready_paths if not path.is_file()]
+            raise TimeoutError(f"timed out waiting for timing ready artifacts: {missing}")
+        time.sleep(min(0.25, max(0.01, deadline - time.monotonic())))
+    ready = [read_json(path) for path in ready_paths]
+    common = _timing_common_identity(ready[0])
+    common_sha256 = canonical_digest(common)
+    expected_common = _expected_timing_common_identity(config, output_root, ready[0])
+    if common != expected_common:
+        raise RuntimeError("timing ready identity differs from frozen and live artifacts")
+    for index, value in enumerate(ready):
+        if (
+            set(value) != _TIMING_READY_KEYS
+            or value.get("schema_version") != 1
+            or value.get("complete") is not True
+            or value.get("worker_index") != index
+            or value.get("topology") != _timing_topology(config)
+            or canonical_digest(_timing_common_identity(value)) != common_sha256
+            or value.get("selected_opaque_slots") != _expected_selected_slots(config)
+        ):
+            raise RuntimeError("timing ready reports do not share one frozen identity")
+        initialization = float(value.get("initialization_seconds", math.nan))
+        if not math.isfinite(initialization) or initialization <= 0:
+            raise RuntimeError("timing ready report has invalid initialization duration")
+    started_monotonic = time.monotonic()
+    start = {
+        "schema_version": 1,
+        "complete": True,
+        "topology": "four_worker_same_tasks",
+        "worker_count": worker_count,
+        "common_identity_sha256": common_sha256,
+        "start_monotonic_seconds": started_monotonic,
+        "start_unix_seconds": time.time(),
+        "ready_reports": [
+            {
+                "worker_index": index,
+                "path": str(path.relative_to(output_root)),
+                "sha256": file_sha256(path),
+            }
+            for index, path in enumerate(ready_paths)
+        ],
+    }
+    atomic_json(start_path, start)
+    return start
+
+
+def run_timing_worker(
     *,
     config: Mapping[str, Any],
     output_root: Path,
     checkpoint_dir: Path,
     model_cache: Path,
+    worker_index: int,
     device: str,
+    dependency_environment: Mapping[str, Any],
+    process_started_monotonic: float,
     cold_cache_provenance: Path | None = None,
 ) -> dict[str, Any]:
-    """Time the frozen workload while discarding every concept-facing result."""
+    """Measure one barrier-synchronized worker without writing the authoritative report."""
 
+    topology = _timing_topology(config)
+    if worker_index not in range(int(topology["measured_worker_count"])):
+        raise ValueError("timing worker index is outside the frozen four-worker topology")
+    worker_path = _timing_worker_path(output_root, worker_index)
+    ready_path = _timing_ready_path(output_root, worker_index)
+    if worker_path.exists() or ready_path.exists():
+        raise RuntimeError("timing worker artifacts already exist; use a fresh timing root")
     resolved = load_resolved(output_root, config)
     cache = verify_cache_ready(config, output_root, model_cache)
     cache_generation_timing = _resolve_cache_generation_timing(
@@ -1822,7 +2265,13 @@ def run_timing_smoke(
     probe_seed = int(smoke["probe_seed"])
     if probe_seed in config["benchmark"]["probe_seeds"]:
         raise RuntimeError("timing smoke seed must remain outside the report seed set")
-    thread_quota = _timing_thread_quota(config)
+    runtime_resources = _timing_thread_quota(config)
+    cpu_budget_path = output_root / "cpu_budget.json"
+    if not cpu_budget_path.is_file():
+        raise RuntimeError("timing worker requires the launcher CPU-budget artifact")
+    cpu_budget = _validate_cpu_budget(config, read_json(cpu_budget_path), label="launcher")
+    if {key: runtime_resources[key] for key in cpu_budget} != cpu_budget:
+        raise RuntimeError("live runtime resources differ from the launcher CPU budget")
 
     from sae_probes.run_sae_evals import DATASET_SIZES
     from sae_probes.utils_data import get_xy_traintest
@@ -1838,11 +2287,52 @@ def run_timing_smoke(
             for item in selected
         ]
     )
+    selected_slots = [
+        {"slot": item["slot"], "quartile": int(item["quartile"])} for item in selected
+    ]
     torch_device = torch.device(device)
     adapters = {
         method: load_adapter(config, checkpoint_dir, method, torch_device)
         for method in ("mse", "dpsae")
     }
+    stable_dependency = stable_resolved_contract({"environment": dependency_environment})[
+        "environment"
+    ]
+    frozen_dependency = stable_resolved_contract(
+        {"environment": resolved.get("environment", {})}
+    )["environment"]
+    if stable_dependency != frozen_dependency:
+        raise RuntimeError("timing worker dependency environment differs from the frozen run")
+    ready = {
+        "schema_version": 1,
+        "complete": True,
+        "worker_index": worker_index,
+        "config_digest": resolved["config_digest"],
+        "artifact_hashes": resolved["artifact_hashes"],
+        "source_hashes_sha256": canonical_digest(resolved["source_hashes"]),
+        "dependency_environment_sha256": canonical_digest(stable_dependency),
+        "cache_ready_sha256": file_sha256(output_root / "cache_ready.json"),
+        "cache_file_hashes_sha256": _cache_file_hashes_digest(cache),
+        "selection_manifest_sha256": selection_digest,
+        "selected_opaque_slots": selected_slots,
+        "runtime_resources": runtime_resources,
+        "cpu_budget_sha256": file_sha256(cpu_budget_path),
+        "cache_generation_timing": cache_generation_timing,
+        "topology": topology,
+        "initialization_seconds": time.monotonic() - process_started_monotonic,
+        "ready_monotonic_seconds": time.monotonic(),
+    }
+    atomic_json(ready_path, ready)
+    common_sha256 = canonical_digest(_timing_common_identity(ready))
+    start = _wait_for_timing_start(
+        output_root,
+        ready_path,
+        common_sha256,
+        float(smoke["barrier_timeout_seconds"]),
+    )
+    measurement_started = time.monotonic()
+    cpu_stat_before = _read_cgroup_cpu_stat()
+
     method_slots = {"mse": "sparse_method_0", "dpsae": "sparse_method_1"}
     rows = []
     for item in selected:
@@ -1913,39 +2403,21 @@ def run_timing_smoke(
         )
 
         def fit_full_codes() -> None:
-            for (
-                train_code,
-                _train_recon,
-                test_code,
-                _test_recon,
-            ) in companion_representations.values():
+            for train_code, _train_recon, test_code, _test_recon in companion_representations.values():
                 find_best_reg_l2_parallel_cold_C(
                     _full_code_csr(train_code),
                     y_train,
                     _full_code_csr(test_code),
                     y_test,
                     seed=probe_seed,
-                    n_jobs=int(
-                        config["runtime"]["companion_full_code_cold_C_jobs_per_worker"]
-                    ),
+                    n_jobs=int(config["runtime"]["companion_full_code_cold_C_jobs_per_worker"]),
                 )
 
         _, full_code_l2_seconds = _timed_call(torch_device, fit_full_codes)
 
         def fit_reconstructions() -> None:
-            for (
-                _train_code,
-                train_recon,
-                _test_code,
-                test_recon,
-            ) in companion_representations.values():
-                find_best_reg(
-                    train_recon,
-                    y_train,
-                    test_recon,
-                    y_test,
-                    seed=probe_seed,
-                )
+            for _train_code, train_recon, _test_code, test_recon in companion_representations.values():
+                find_best_reg(train_recon, y_train, test_recon, y_test, seed=probe_seed)
 
         _, reconstruction_l2_seconds = _timed_call(torch_device, fit_reconstructions)
         companion_stage = {
@@ -1956,7 +2428,6 @@ def run_timing_smoke(
             "reconstruction_l2": reconstruction_l2_seconds,
         }
         companion_stage["total"] = sum(companion_stage.values())
-        total_seconds = time.perf_counter() - task_started
         gpu_allocated = (
             int(torch.cuda.max_memory_allocated(torch_device)) if torch_device.type == "cuda" else 0
         )
@@ -1969,11 +2440,8 @@ def run_timing_smoke(
                 "quartile": item["quartile"],
                 "n_train": len(X_train),
                 "n_test": len(X_test),
-                "stage_seconds": {
-                    **sparse_stages,
-                    "companion": companion_stage,
-                },
-                "total_seconds": total_seconds,
+                "stage_seconds": {**sparse_stages, "companion": companion_stage},
+                "total_seconds": time.perf_counter() - task_started,
                 "peak_rss_mib": _peak_rss_mib(),
                 "peak_gpu_allocated_bytes": gpu_allocated,
                 "peak_gpu_reserved_bytes": gpu_reserved,
@@ -1985,31 +2453,351 @@ def run_timing_smoke(
         if torch_device.type == "cuda":
             torch.cuda.empty_cache()
 
+    measurement_finished = time.monotonic()
+    report = {
+        **ready,
+        "schema_version": 1,
+        "complete": True,
+        "barrier_start_sha256": file_sha256(output_root / "timing_barrier" / "start.json"),
+        "barrier_start_monotonic_seconds": float(start["start_monotonic_seconds"]),
+        "measurement_started_monotonic_seconds": measurement_started,
+        "measurement_finished_monotonic_seconds": measurement_finished,
+        "measurement_seconds": measurement_finished - measurement_started,
+        "task_count": len(rows),
+        "names_and_concept_results_suppressed": True,
+        "saved_concept_metric_count": 0,
+        "cgroup_cpu_stat_delta": _cgroup_cpu_stat_delta(
+            cpu_stat_before, _read_cgroup_cpu_stat()
+        ),
+        "tasks": rows,
+    }
+    _validate_timing_worker_report(config, report, worker_index=worker_index)
+    atomic_json(worker_path, report)
+    return report
+
+
+def _validate_timing_worker_report(
+    config: Mapping[str, Any], value: Any, *, worker_index: int
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise RuntimeError("timing worker report is not an object")
+    report = dict(value)
+    if set(report) != _TIMING_WORKER_KEYS:
+        raise RuntimeError("timing worker top-level schema or privacy boundary drift")
+    required = {
+        "schema_version": 1,
+        "complete": True,
+        "worker_index": worker_index,
+        "config_digest": canonical_digest(config),
+        "topology": _timing_topology(config),
+        "task_count": int(config["runtime"]["timing_smoke"]["task_count"]),
+        "names_and_concept_results_suppressed": True,
+        "saved_concept_metric_count": 0,
+    }
+    for key, expected in required.items():
+        if report.get(key) != expected:
+            raise RuntimeError(f"timing worker {worker_index} identity drift for {key}")
+    _validate_reported_runtime_resources(config, report.get("runtime_resources"))
+    _validate_timing_rows(config, report.get("tasks"))
+    _validate_cgroup_cpu_stat_delta(report.get("cgroup_cpu_stat_delta"))
+    for key in (
+        "initialization_seconds",
+        "ready_monotonic_seconds",
+        "barrier_start_monotonic_seconds",
+        "measurement_started_monotonic_seconds",
+        "measurement_finished_monotonic_seconds",
+        "measurement_seconds",
+    ):
+        number = float(report.get(key, math.nan))
+        if not math.isfinite(number) or number <= 0:
+            raise RuntimeError(f"timing worker {worker_index} has invalid {key}")
+    if report["measurement_started_monotonic_seconds"] < report["barrier_start_monotonic_seconds"]:
+        raise RuntimeError("timing worker started before the release barrier")
+    if not math.isclose(
+        report["measurement_finished_monotonic_seconds"]
+        - report["measurement_started_monotonic_seconds"],
+        report["measurement_seconds"],
+        rel_tol=1e-9,
+        abs_tol=1e-6,
+    ):
+        raise RuntimeError("timing worker measurement interval is inconsistent")
+    return report
+
+
+def _load_timing_fleet(
+    config: Mapping[str, Any], output_root: Path
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
+    worker_count = int(config["runtime"]["timing_smoke"]["measured_worker_count"])
+    workers = []
+    exits = []
+    for index in range(worker_count):
+        worker_path = _timing_worker_path(output_root, index)
+        if not worker_path.is_file():
+            raise RuntimeError(f"missing timing worker report {index}")
+        workers.append(
+            _validate_timing_worker_report(config, read_json(worker_path), worker_index=index)
+        )
+        exit_path = _timing_exit_path(output_root, index)
+        if not exit_path.is_file():
+            raise RuntimeError(f"missing timing worker exit sentinel {index}")
+        sentinel = read_json(exit_path)
+        if (
+            set(sentinel) != _TIMING_EXIT_KEYS
+            or sentinel.get("schema_version") != 1
+            or sentinel.get("complete") is not True
+            or sentinel.get("worker_index") != index
+            or sentinel.get("exit_code") != 0
+            or sentinel.get("worker_report_sha256") != file_sha256(worker_path)
+        ):
+            raise RuntimeError(f"timing worker {index} did not exit successfully")
+        exits.append(sentinel)
+    common_sha256 = canonical_digest(_timing_common_identity(workers[0]))
+    task_identity = [
+        (row["slot"], row["quartile"], row["n_train"], row["n_test"])
+        for row in workers[0]["tasks"]
+    ]
+    for worker in workers[1:]:
+        if canonical_digest(_timing_common_identity(worker)) != common_sha256:
+            raise RuntimeError("timing workers do not share one frozen identity")
+        observed = [
+            (row["slot"], row["quartile"], row["n_train"], row["n_test"])
+            for row in worker["tasks"]
+        ]
+        if observed != task_identity:
+            raise RuntimeError("timing workers did not measure the same opaque task set")
+    start_path = output_root / "timing_barrier" / "start.json"
+    if not start_path.is_file():
+        raise RuntimeError("timing barrier start artifact is missing")
+    start = read_json(start_path)
+    refs = start.get("ready_reports")
+    if (
+        set(start) != _TIMING_START_KEYS
+        or start.get("schema_version") != 1
+        or start.get("complete") is not True
+        or start.get("topology") != "four_worker_same_tasks"
+        or start.get("worker_count") != worker_count
+        or start.get("common_identity_sha256") != common_sha256
+        or not isinstance(refs, list)
+        or len(refs) != worker_count
+    ):
+        raise RuntimeError("timing barrier start artifact schema drift")
+    expected_common = _expected_timing_common_identity(config, output_root, workers[0])
+    if _timing_common_identity(workers[0]) != expected_common:
+        raise RuntimeError("timing fleet identity differs from frozen and live artifacts")
+    for index, ref in enumerate(refs):
+        ready_path = _timing_ready_path(output_root, index)
+        if (
+            not isinstance(ref, Mapping)
+            or set(ref) != {"worker_index", "path", "sha256"}
+            or not ready_path.is_file()
+            or ref.get("worker_index") != index
+            or ref.get("path") != str(ready_path.relative_to(output_root))
+            or ref.get("sha256") != file_sha256(ready_path)
+            or set(read_json(ready_path)) != _TIMING_READY_KEYS
+            or canonical_digest(_timing_common_identity(read_json(ready_path))) != common_sha256
+        ):
+            raise RuntimeError("timing barrier ready artifact hash or identity drift")
+    start_sha256 = file_sha256(start_path)
+    if any(worker.get("barrier_start_sha256") != start_sha256 for worker in workers):
+        raise RuntimeError("timing worker barrier hash drift")
+    starts = [float(worker["measurement_started_monotonic_seconds"]) for worker in workers]
+    start_skew = max(starts) - min(starts)
+    maximum_skew = float(config["runtime"]["timing_smoke"]["maximum_start_skew_seconds"])
+    if start_skew > maximum_skew:
+        raise RuntimeError("timing worker start skew exceeds the frozen maximum")
+    return workers, start, exits
+
+
+def _project_timing_smoke(
+    config: Mapping[str, Any],
+    worker_reports: Sequence[Mapping[str, Any]],
+    *,
+    cache_generation_seconds: float,
+) -> dict[str, Any]:
+    expected_workers = int(config["runtime"]["timing_smoke"]["measured_worker_count"])
+    if len(worker_reports) != expected_workers:
+        raise ValueError("timing projection rejects isolated or pooled measurements")
+    smoke = config["runtime"]["timing_smoke"]
+    method_slots = {"mse": "sparse_method_0", "dpsae": "sparse_method_1"}
+    dataset_count = len(config["benchmark"]["datasets"])
+    pair_units = int(smoke["projection_pair_units"])
+    if pair_units != dataset_count * len(config["benchmark"]["probe_seeds"]):
+        raise RuntimeError("timing projection units differ from the frozen dataset-seed grid")
+    headroom = float(smoke["headroom_multiplier"])
+    worker_projections = []
+    for worker_index, report in enumerate(worker_reports):
+        rows = _validate_timing_rows(config, report.get("tasks"))
+        components = {
+            slot: float(
+                np.quantile(
+                    np.asarray([row["stage_seconds"][slot]["total"] for row in rows]), 0.95
+                )
+            )
+            for slot in (*method_slots.values(), "companion")
+        }
+        sparse_shard = config["runtime"]["sparse_worker_shards"][worker_index]
+        sparse_slot = method_slots[sparse_shard["method"]]
+        sparse_seed_count = len(sparse_shard["probe_seeds"])
+        companion_seed_count = len(config["runtime"]["companion_seed_shards"][worker_index])
+        unpadded = dataset_count * (
+            sparse_seed_count * components[sparse_slot]
+            + companion_seed_count * components["companion"]
+        )
+        worker_projections.append(
+            {
+                "worker_index": worker_index,
+                "component_p95_seconds": components,
+                "task_p95_seconds": float(
+                    np.quantile(np.asarray([row["total_seconds"] for row in rows]), 0.95)
+                ),
+                "sparse_slot": sparse_slot,
+                "sparse_seed_count": sparse_seed_count,
+                "companion_seed_count": companion_seed_count,
+                "p95_workload_seconds": unpadded,
+                "p95_workload_seconds_with_headroom": unpadded * headroom,
+            }
+        )
+    slowest = max(worker_projections, key=lambda item: item["p95_workload_seconds_with_headroom"])
+    maximum_initialization = max(float(report["initialization_seconds"]) for report in worker_reports)
+    workload = float(slowest["p95_workload_seconds_with_headroom"])
+    return {
+        "aggregation": "slowest_measured_worker",
+        "headroom_multiplier": headroom,
+        "dataset_count": dataset_count,
+        "pair_units": pair_units,
+        "worker_projections": worker_projections,
+        "slowest_worker_index": int(slowest["worker_index"]),
+        "maximum_initialization_seconds": maximum_initialization,
+        "initialization_accounting": "maximum_pre_barrier_initialization_added_once",
+        "cache_generation_seconds": float(cache_generation_seconds),
+        "projected_workload_seconds_with_headroom": workload,
+        "projected_pod_hours": (
+            float(cache_generation_seconds) + maximum_initialization + workload
+        )
+        / 3600,
+        "maximum_projected_pod_hours": float(smoke["maximum_projected_pod_hours"]),
+    }
+
+
+def _assemble_timing_smoke_report(
+    config: Mapping[str, Any],
+    *,
+    resolved: Mapping[str, Any],
+    worker_reports: Sequence[Mapping[str, Any]],
+    worker_report_refs: Sequence[Mapping[str, Any]],
+    worker_exit_refs: Sequence[Mapping[str, Any]],
+    barrier: Mapping[str, Any],
+) -> dict[str, Any]:
+    smoke = config["runtime"]["timing_smoke"]
+    cache_timing = dict(worker_reports[0]["cache_generation_timing"])
+    projection = _project_timing_smoke(
+        config,
+        worker_reports,
+        cache_generation_seconds=float(cache_timing["generation_seconds"]),
+    )
+    return {
+        "schema_version": 6,
+        "complete": True,
+        "passed": projection["projected_pod_hours"]
+        <= float(smoke["maximum_projected_pod_hours"]),
+        "config_digest": resolved["config_digest"],
+        "artifact_hashes": resolved["artifact_hashes"],
+        "source_hashes_sha256": canonical_digest(resolved["source_hashes"]),
+        "probe_seed": int(smoke["probe_seed"]),
+        "task_count": int(smoke["task_count"]),
+        "measured_task_count": len(worker_reports) * int(smoke["task_count"]),
+        "measured_worker_count": len(worker_reports),
+        "topology": _timing_topology(config),
+        "selection_policy": smoke["selection"],
+        "selection_manifest_sha256": worker_reports[0]["selection_manifest_sha256"],
+        "names_and_concept_results_suppressed": True,
+        "saved_concept_metric_count": 0,
+        "companion_full_code_matrix_format": "scipy_csr_exact_values",
+        "companion_l2_path_optimization": (
+            "parallel_independent_cold_C_loky_cold_selected_C_refit"
+        ),
+        "companion_full_code_cold_C_jobs_per_worker": int(
+            config["runtime"]["companion_full_code_cold_C_jobs_per_worker"]
+        ),
+        "runtime_resources": dict(worker_reports[0]["runtime_resources"]),
+        "cpu_budget_sha256": worker_reports[0]["cpu_budget_sha256"],
+        "cache_generation_timing": cache_timing,
+        "timing_worker_reports": list(worker_report_refs),
+        "timing_worker_exit_sentinels": list(worker_exit_refs),
+        "barrier": dict(barrier),
+        "cgroup_cpu_stat_deltas": [worker["cgroup_cpu_stat_delta"] for worker in worker_reports],
+        "projection": projection,
+    }
+
+
+def finalize_timing_smoke(config: Mapping[str, Any], output_root: Path) -> dict[str, Any]:
+    final_path = output_root / "timing_smoke.json"
+    if final_path.exists():
+        raise RuntimeError("authoritative timing report already exists; use a fresh timing root")
+    resolved = load_resolved(output_root, config)
+    workers, start, _exits = _load_timing_fleet(config, output_root)
+    worker_refs = [
+        {
+            "worker_index": index,
+            "path": str(_timing_worker_path(output_root, index).relative_to(output_root)),
+            "sha256": file_sha256(_timing_worker_path(output_root, index)),
+            "task_count": int(workers[index]["task_count"]),
+        }
+        for index in range(len(workers))
+    ]
+    exit_refs = [
+        {
+            "worker_index": index,
+            "path": str(_timing_exit_path(output_root, index).relative_to(output_root)),
+            "sha256": file_sha256(_timing_exit_path(output_root, index)),
+            "exit_code": 0,
+        }
+        for index in range(len(workers))
+    ]
+    starts = [float(worker["measurement_started_monotonic_seconds"]) for worker in workers]
+    barrier = {
+        "synchronized": True,
+        "start_path": "timing_barrier/start.json",
+        "start_sha256": file_sha256(output_root / "timing_barrier" / "start.json"),
+        "common_identity_sha256": start["common_identity_sha256"],
+        "ready_reports": start["ready_reports"],
+        "start_monotonic_seconds": start["start_monotonic_seconds"],
+        "observed_start_skew_seconds": max(starts) - min(starts),
+        "maximum_start_skew_seconds": float(
+            config["runtime"]["timing_smoke"]["maximum_start_skew_seconds"]
+        ),
+    }
     report = _assemble_timing_smoke_report(
         config,
         resolved=resolved,
-        rows=rows,
-        selection_digest=selection_digest,
-        thread_quota=thread_quota,
-        cache_generation_timing=cache_generation_timing,
+        worker_reports=workers,
+        worker_report_refs=worker_refs,
+        worker_exit_refs=exit_refs,
+        barrier=barrier,
     )
-    atomic_json(output_root / "timing_smoke.json", report)
+    atomic_json(final_path, report)
     return report
 
 
 def verify_timing_smoke_gate(config: Mapping[str, Any], output_root: Path) -> dict[str, Any]:
     path = output_root / "timing_smoke.json"
     if not path.is_file():
-        raise RuntimeError("run the blind timing smoke before starting exp10 workers")
+        raise RuntimeError("run the four-worker blind timing smoke before exp10 workers")
     report = read_json(path)
     smoke = config["runtime"]["timing_smoke"]
+    if not isinstance(report, Mapping) or set(report) != _TIMING_REPORT_KEYS:
+        raise RuntimeError("timing-smoke top-level schema or privacy boundary drift")
     required = {
-        "schema_version": 5,
+        "schema_version": 6,
         "complete": True,
         "passed": True,
         "config_digest": canonical_digest(config),
         "probe_seed": int(smoke["probe_seed"]),
         "task_count": int(smoke["task_count"]),
+        "measured_task_count": int(smoke["task_count"])
+        * int(smoke["measured_worker_count"]),
+        "measured_worker_count": int(smoke["measured_worker_count"]),
+        "topology": _timing_topology(config),
         "names_and_concept_results_suppressed": True,
         "saved_concept_metric_count": 0,
         "companion_full_code_matrix_format": "scipy_csr_exact_values",
@@ -2026,28 +2814,78 @@ def verify_timing_smoke_gate(config: Mapping[str, Any], output_root: Path) -> di
                 f"timing-smoke gate failed for {key}: expected {expected!r}, "
                 f"observed {report.get(key)!r}"
             )
-    projected = float(report.get("projection", {}).get("projected_pod_hours", math.inf))
-    if projected > float(smoke["maximum_projected_pod_hours"]):
-        raise RuntimeError("blind timing projection exceeds the frozen pod-hour limit")
-    timing = report.get("cache_generation_timing", {})
-    generation_seconds = float(timing.get("generation_seconds", math.nan))
-    projected_cache_seconds = float(
-        report.get("projection", {}).get("cache_generation_seconds", math.nan)
-    )
+    resolved = load_resolved(output_root, config)
+    if report.get("source_hashes_sha256") != canonical_digest(resolved["source_hashes"]):
+        raise RuntimeError("timing-smoke source hash identity drift")
+    _validate_reported_runtime_resources(config, report.get("runtime_resources"))
+    cpu_budget_path = output_root / "cpu_budget.json"
+    if not cpu_budget_path.is_file():
+        raise RuntimeError("timing-smoke CPU-budget artifact is missing")
+    cpu_budget = _validate_cpu_budget(config, read_json(cpu_budget_path), label="launcher")
+    if report.get("cpu_budget_sha256") != file_sha256(cpu_budget_path):
+        raise RuntimeError("timing-smoke CPU-budget artifact hash drift")
+    if any(report["runtime_resources"].get(key) != value for key, value in cpu_budget.items()):
+        raise RuntimeError("timing-smoke resources differ from the CPU-budget artifact")
+    workers, start, _exits = _load_timing_fleet(config, output_root)
+    expected_worker_refs = [
+        {
+            "worker_index": index,
+            "path": str(_timing_worker_path(output_root, index).relative_to(output_root)),
+            "sha256": file_sha256(_timing_worker_path(output_root, index)),
+            "task_count": int(smoke["task_count"]),
+        }
+        for index in range(len(workers))
+    ]
+    expected_exit_refs = [
+        {
+            "worker_index": index,
+            "path": str(_timing_exit_path(output_root, index).relative_to(output_root)),
+            "sha256": file_sha256(_timing_exit_path(output_root, index)),
+            "exit_code": 0,
+        }
+        for index in range(len(workers))
+    ]
+    if report.get("timing_worker_reports") != expected_worker_refs:
+        raise RuntimeError("timing-smoke worker report hashes drift")
+    if report.get("timing_worker_exit_sentinels") != expected_exit_refs:
+        raise RuntimeError("timing-smoke worker exit sentinel hashes drift")
+    starts = [float(worker["measurement_started_monotonic_seconds"]) for worker in workers]
+    expected_barrier = {
+        "synchronized": True,
+        "start_path": "timing_barrier/start.json",
+        "start_sha256": file_sha256(output_root / "timing_barrier" / "start.json"),
+        "common_identity_sha256": start["common_identity_sha256"],
+        "ready_reports": start["ready_reports"],
+        "start_monotonic_seconds": start["start_monotonic_seconds"],
+        "observed_start_skew_seconds": max(starts) - min(starts),
+        "maximum_start_skew_seconds": float(smoke["maximum_start_skew_seconds"]),
+    }
     if (
-        not math.isfinite(generation_seconds)
-        or generation_seconds <= 0
-        or not math.isclose(
-            generation_seconds,
-            projected_cache_seconds,
-            abs_tol=1e-6,
-            rel_tol=0,
-        )
+        not isinstance(report.get("barrier"), Mapping)
+        or set(report["barrier"]) != _TIMING_BARRIER_PROOF_KEYS
+        or report.get("barrier") != expected_barrier
     ):
-        raise RuntimeError("timing-smoke projection did not use its cold-cache duration")
-    source = timing.get("source")
+        raise RuntimeError("timing-smoke barrier proof drift")
+    timing = report.get("cache_generation_timing", {})
+    projection = _project_timing_smoke(
+        config,
+        workers,
+        cache_generation_seconds=float(timing.get("generation_seconds", math.nan)),
+    )
+    if report.get("projection") != projection:
+        raise RuntimeError("timing-smoke projection was not rebuilt from four worker reports")
+    if projection.get("aggregation") != "slowest_measured_worker":
+        raise RuntimeError("timing-smoke pooled projection is forbidden")
+    if projection["projected_pod_hours"] > float(smoke["maximum_projected_pod_hours"]):
+        raise RuntimeError("blind timing projection exceeds the frozen pod-hour limit")
+    if report.get("cgroup_cpu_stat_deltas") != [
+        worker["cgroup_cpu_stat_delta"] for worker in workers
+    ]:
+        raise RuntimeError("timing-smoke cgroup cpu.stat delta proof drift")
     ready_path = output_root / "cache_ready.json"
     ready = read_json(ready_path)
+    generation_seconds = float(timing.get("generation_seconds", math.nan))
+    source = timing.get("source")
     if source == "external_hash_bound_provenance":
         provenance_path = Path(str(timing.get("provenance_path", "")))
         if not provenance_path.is_file() or file_sha256(provenance_path) != timing.get(
@@ -2141,6 +2979,7 @@ def run_worker(
             model_cache=model_cache,
             timeout_seconds=cache_wait_seconds,
         )
+    runtime_resources = _timing_thread_quota(config)
     timing_smoke = verify_timing_smoke_gate(config, output_root)
     torch_device = torch.device(device)
     adapters = {
@@ -2189,6 +3028,7 @@ def run_worker(
         "probe_seeds": seeds,
         "companion_seeds": companions,
         "device": device,
+        "runtime_resources": runtime_resources,
         "dependency_preflight": dict(dependency_preflight),
         "worker_seconds_excluding_dependency_preflight": time.monotonic() - started,
         "sparse_job_count": len(sparse_results),
@@ -2528,6 +3368,7 @@ def _path(value: str) -> Path:
 
 
 def main() -> None:
+    process_started_monotonic = time.monotonic()
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=_path, default=DEFAULT_CONFIG)
     parser.add_argument("--output-root", type=_path, default=DEFAULT_OUTPUT)
@@ -2576,6 +3417,14 @@ def main() -> None:
     timing_preflight_parser.add_argument("--model-cache", type=_path, required=True)
     timing_preflight_parser.add_argument("--cold-cache-provenance", type=_path)
     timing_preflight_parser.add_argument("--device", default="cuda:0")
+    timing_worker_parser = subparsers.add_parser("timing-worker")
+    timing_worker_parser.add_argument("--model-cache", type=_path, required=True)
+    timing_worker_parser.add_argument("--cold-cache-provenance", type=_path)
+    timing_worker_parser.add_argument("--worker-index", type=int, required=True)
+    timing_worker_parser.add_argument("--device", default="cuda:0")
+    timing_barrier_parser = subparsers.add_parser("timing-start-barrier")
+    timing_barrier_parser.add_argument("--timeout-seconds", type=float)
+    subparsers.add_parser("timing-finalize")
     subparsers.add_parser("timing-gate")
 
     worker_parser = subparsers.add_parser("run-worker")
@@ -2706,44 +3555,44 @@ def main() -> None:
             )
         )
     elif args.command == "timing-smoke":
+        parser.error(
+            "isolated timing-smoke is forbidden; use four timing-worker processes and "
+            "timing-start-barrier"
+        )
+    elif args.command == "timing-preflight":
+        parser.error(
+            "isolated timing-preflight is forbidden; use the four-worker timing launcher"
+        )
+    elif args.command == "timing-worker":
         if args.saebench_root is None:
-            parser.error("timing-smoke requires --saebench-root")
-        verify_saebench_environment(config, args.saebench_root)
-        report = run_timing_smoke(
+            parser.error("timing-worker requires --saebench-root")
+        dependency_environment = verify_saebench_environment(config, args.saebench_root)
+        report = run_timing_worker(
             config=config,
             output_root=args.output_root,
             checkpoint_dir=checkpoint_dir,
             model_cache=args.model_cache.resolve(),
+            worker_index=args.worker_index,
             device=args.device,
+            dependency_environment=dependency_environment,
+            process_started_monotonic=process_started_monotonic,
             cold_cache_provenance=args.cold_cache_provenance,
         )
         print(json.dumps(report, indent=2, sort_keys=True))
-        if not report["passed"]:
-            raise SystemExit(2)
-    elif args.command == "timing-preflight":
-        if args.saebench_root is None:
-            parser.error("timing-preflight requires --saebench-root")
-        freeze_run(
-            config_path=args.config,
-            output_root=args.output_root,
-            checkpoint_dir=checkpoint_dir,
-            saebench_root=args.saebench_root,
+    elif args.command == "timing-start-barrier":
+        print(
+            json.dumps(
+                start_timing_barrier(
+                    config,
+                    args.output_root,
+                    timeout_seconds=args.timeout_seconds,
+                ),
+                indent=2,
+                sort_keys=True,
+            )
         )
-        prepare_cache(
-            config=config,
-            output_root=args.output_root,
-            model_cache=args.model_cache.resolve(),
-            device=args.device,
-            cold_cache_provenance=args.cold_cache_provenance,
-        )
-        report = run_timing_smoke(
-            config=config,
-            output_root=args.output_root,
-            checkpoint_dir=checkpoint_dir,
-            model_cache=args.model_cache.resolve(),
-            device=args.device,
-            cold_cache_provenance=args.cold_cache_provenance,
-        )
+    elif args.command == "timing-finalize":
+        report = finalize_timing_smoke(config, args.output_root)
         print(json.dumps(report, indent=2, sort_keys=True))
         if not report["passed"]:
             raise SystemExit(2)
