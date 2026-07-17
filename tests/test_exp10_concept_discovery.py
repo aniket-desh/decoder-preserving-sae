@@ -342,7 +342,7 @@ def test_parallel_cold_C_rejects_path_reuse_counterexample(monkeypatch):
         n_jobs=2,
     )
 
-    assert reference["C"] == 599.4842503189409
+    assert reference["C"] == float(np.logspace(5, -5, 10)[2])
     assert optimized.classifier.C == reference["C"]
     for name, value in reference["metrics"].items():
         assert runner._metrics_dict(optimized)[name] == pytest.approx(value, abs=1e-10, rel=0)
