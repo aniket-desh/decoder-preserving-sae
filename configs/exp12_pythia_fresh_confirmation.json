@@ -1,0 +1,225 @@
+{
+  "schema_version": 1,
+  "experiment_id": "exp12_pythia_fresh_confirmation",
+  "status": "frozen",
+  "pilot_gate": {
+    "required": true,
+    "report_field": "advance_fresh_confirmation",
+    "required_value": true,
+    "exclude_pilot_checkpoint_id": "pythia160m_block8_s0_25m"
+  },
+  "model": {
+    "name": "EleutherAI/pythia-160m-deduped",
+    "revision": "582159a2dfe3e712a8d47ae83dec95ae3bde8e7e",
+    "architecture": "gpt_neox",
+    "one_based_block": 8,
+    "hidden_size": 768,
+    "dtype": "bfloat16"
+  },
+  "sae": {
+    "dictionary_size": 16384,
+    "target_l0": 32,
+    "decoder_weight": 0.03125,
+    "sparsity_mode": "batch_topk",
+    "learning_rate": 0.0003,
+    "warmup_fraction": 0.02,
+    "aux_weight": 0.03125,
+    "dead_after_steps": 2000,
+    "aux_k": 512,
+    "group_size": 128,
+    "decoder_probes": 16,
+    "ridge_dof_fraction": 0.25,
+    "ridge_calibration_groups": 32
+  },
+  "confirmation": {
+    "pair_seeds": [
+      1,
+      2,
+      3
+    ],
+    "pair_count": 3,
+    "pairing": "same_initialization_activation_stream_minibatch_order_and_schedule_within_pair",
+    "replication_unit": "trained_mse_dpsae_checkpoint_pair"
+  },
+  "corpus": {
+    "dataset_name": "HuggingFaceFW/fineweb",
+    "dataset_config": "sample-10BT",
+    "dataset_split": "train",
+    "dataset_revision": "9bb295ddab0e05d785b879661af7260fed5140fc",
+    "tokenizer": "EleutherAI/pythia-160m-deduped",
+    "cache_absolute_range": [
+      50000128,
+      302000128
+    ],
+    "calibration_absolute_range": [
+      50000128,
+      50065664
+    ],
+    "training_absolute_range": [
+      51048704,
+      302000128
+    ],
+    "maturity_evaluation_absolute_range": [
+      50065664,
+      50131200
+    ],
+    "frozen_network_absolute_range": [
+      50131200,
+      50655488
+    ],
+    "stream_order": "sequential_nonoverlapping_sequences_v1",
+    "reuse_tracking": "exact_delivered_tokens_unique_tokens_cache_epoch_and_reused_tokens",
+    "allow_training_cache_reuse": false
+  },
+  "training": {
+    "sequence_length": 256,
+    "sequences_per_batch": 8,
+    "snapshot_tokens": [
+      25000000,
+      50000000,
+      100000000,
+      250000000,
+      500000000
+    ],
+    "required_snapshot_tokens": [
+      25000000,
+      50000000,
+      100000000,
+      250000000
+    ],
+    "snapshot_boundary_rule": "first_completed_minibatch_at_or_above_requested_tokens",
+    "maximum_tokens": 250000000,
+    "scheduler": "linear_warmup_then_cosine_decay",
+    "scheduler_horizon_tokens": 250000000,
+    "resume_checkpoint_tokens": 5000000,
+    "log_every_steps": 25,
+    "resume_requires_optimizer_scheduler_stream_and_hash_match": true
+  },
+  "calibration": {
+    "activation_tokens": 65536,
+    "sequence_sampling": "first_nonoverlapping_aligned_sequences_in_frozen_range"
+  },
+  "maturity_evaluation": {
+    "activation_tokens": 16384,
+    "sequence_sampling": "first_nonoverlapping_aligned_sequences_in_frozen_range",
+    "metrics": [
+      "nmse",
+      "exact_decoder_distortion",
+      "inference_l0",
+      "dead_feature_fraction"
+    ],
+    "exact_decoder": {
+      "group_size": 128,
+      "bootstrap_samples": 10000,
+      "bootstrap_seed": 2027071802,
+      "retain_group_numerators_and_denominators": true
+    },
+    "matched_quality": {
+      "maximum_dpsae_to_mse_nmse_ratio": 1.01,
+      "maximum_relative_l0_error": 0.05,
+      "maximum_pair_relative_l0_difference": 0.05,
+      "maximum_dead_feature_fraction": 0.01
+    }
+  },
+  "maturity_stop_rule": {
+    "rule_version": "exp12_concept_blind_maturity_v1",
+    "concept_blind": true,
+    "forbidden_input_key_substrings": [
+      "concept",
+      "probe",
+      "auroc",
+      "label",
+      "feature"
+    ],
+    "minimum_checkpoint_tokens": 100000000,
+    "plateau_consecutive_intervals": 2,
+    "maximum_relative_change": {
+      "nmse": 0.02,
+      "exact_decoder_distortion": 0.02,
+      "inference_l0": 0.02,
+      "dead_feature_fraction": 1.0
+    },
+    "require_plateau_for_both_methods_in_every_pair": true,
+    "require_matched_quality_in_every_pair": true,
+    "common_checkpoint_selection": "earliest_snapshot_passing_all_frozen_conditions",
+    "extension_to_500m_policy": "not_applicable_maximum_250m",
+    "minimum_unique_exposure_for_500m": 500000000,
+    "maximum_cache_reuse_count_for_500m": 0,
+    "no_plateau_by_maximum_policy": "fail_without_common_checkpoint"
+  },
+  "frozen_network_evaluation": {
+    "sequence_length": 256,
+    "sequences": 2048,
+    "sampling_algorithm": "random_permutation_of_nonoverlapping_aligned_blocks_v1",
+    "sampling_seed": 2027071803,
+    "batch_sequences": 8,
+    "bootstrap_samples": 10000,
+    "bootstrap_seed": 2027071804,
+    "confidence_interval": [
+      0.025,
+      0.975
+    ],
+    "identity_max_abs_logit_difference": 0.00001,
+    "identity_max_mean_abs_logit_difference": 0.0000001,
+    "retain_per_sequence_sufficient_statistics": true
+  },
+  "concept_authorization": {
+    "requires_stop_rule_contract_before_training": true,
+    "requires_common_maturity_decision": true,
+    "requires_decoder_distortion_outputs": true,
+    "requires_frozen_network_outputs": true,
+    "concept_results_forbidden_as_maturity_inputs": true,
+    "confirmatory_inference": {
+      "global_family_block_interval_is_gate_forming": true,
+      "family_specific_p_values": "one_sided_centered_paired_stratified_heldout_example_bootstrap",
+      "holm_adjustment_scope": "family_specific_reporting_only",
+      "family_significance_is_gate_forming": false,
+      "individual_concepts": "descriptive_only"
+    }
+  },
+  "randomness": {
+    "base_seed": 2027071801,
+    "pair_seed_derivation": "blake2s_stage_stream_pair_v1"
+  },
+  "timing_smoke": {
+    "reportable": false,
+    "pair_seed": 2027071899,
+    "cache_absolute_range": [
+      0,
+      2066432
+    ],
+    "calibration_absolute_range": [
+      0,
+      65536
+    ],
+    "training_absolute_range": [
+      65536,
+      2066432
+    ],
+    "requested_training_tokens": 2000000,
+    "projection_headroom_multiplier": 1.3,
+    "maximum_projected_confirmation_wall_hours": 7.25,
+    "maximum_smoke_wall_minutes": 45,
+    "maximum_peak_reserved_gib": 44,
+    "artifact_subdirectory": "nonreport_timing_smoke"
+  },
+  "runpod": {
+    "gpu_type": "A40",
+    "gpu_count": 4,
+    "gpu_memory_gib": 48,
+    "network_volume_gib": 200,
+    "one_process_per_gpu": true,
+    "distributed_training": false,
+    "pair_gpu_indices": [
+      0,
+      1,
+      2
+    ],
+    "coordinator_gpu_index": 3,
+    "minimum_free_disk_gib": 20,
+    "maximum_gpu_reserved_gib": 44,
+    "gpu_memory_fraction": 0.92,
+    "pod_hour_usd": 1.8,
+    "maximum_wall_hours": 8
+  }
+}
