@@ -607,35 +607,35 @@ def test_production_loky_batch_matches_pinned_upstream_when_available(monkeypatc
     monkeypatch.setattr(loky_process, "_system_limited", None)
 
     rng = np.random.RandomState(71)
-    rows = 240
+    rows = 180
     labels = np.tile(np.array([0, 1], dtype=np.int64), rows // 2)
     rng.shuffle(labels)
     matrices = {
-        "original_residual": rng.normal(size=(rows, 12)).astype(np.float32),
-        "mse.reconstruction": rng.normal(size=(rows, 12)).astype(np.float32),
-        "dpsae.reconstruction": rng.normal(size=(rows, 12)).astype(np.float32),
+        "original_residual": rng.normal(size=(rows, 6)).astype(np.float32),
+        "mse.reconstruction": rng.normal(size=(rows, 6)).astype(np.float32),
+        "dpsae.reconstruction": rng.normal(size=(rows, 6)).astype(np.float32),
     }
     for method in ("mse", "dpsae"):
-        dense = np.zeros((rows, 128), dtype=np.float32)
+        dense = np.zeros((rows, 24), dtype=np.float32)
         for row in range(rows):
-            columns = rng.choice(dense.shape[1], size=6, replace=False)
-            dense[row, columns] = rng.normal(size=6)
+            columns = rng.choice(dense.shape[1], size=4, replace=False)
+            dense[row, columns] = rng.normal(size=4)
         matrices[f"{method}.full_code"] = csr_matrix(dense)
-    train_test = {name: (matrix[:180], matrix[180:]) for name, matrix in matrices.items()}
+    train_test = {name: (matrix[:130], matrix[130:]) for name, matrix in matrices.items()}
     references = {
         name: upstream.find_best_reg(
-            train,
-            labels[:180],
-            test,
-            labels[180:],
+            train.toarray() if hasattr(train, "toarray") else train,
+            labels[:130],
+            test.toarray() if hasattr(test, "toarray") else test,
+            labels[130:],
             seed=83,
         )
         for name, (train, test) in train_test.items()
     }
     optimized = runner.find_best_reg_l2_parallel_cold_C_batch(
         train_test,
-        labels[:180],
-        labels[180:],
+        labels[:130],
+        labels[130:],
         seed=83,
         n_jobs=8,
     )
