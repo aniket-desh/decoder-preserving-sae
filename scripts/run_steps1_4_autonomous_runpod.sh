@@ -9,6 +9,7 @@ ROOT="${ROOT:-/workspace/decoder-preserving-sae-concept-v2}"
 EXPECTED_ROOT_REVISION="${EXPECTED_ROOT_REVISION:?set EXPECTED_ROOT_REVISION to the deployed clean commit}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/workspace/dpsae-runs/20260716/exp10_concept_discovery/pythia160m-block8-s0-pilot-v2}"
 MODEL_CACHE="${MODEL_CACHE:-/workspace/dpsae-runs/20260716/exp10_concept_discovery/shared-model-cache-v1}"
+CONFIG="${CONFIG:-$ROOT/configs/exp10_concept_discovery.json}"
 EXP11_ROOT="${EXP11_ROOT:-/workspace/decoder-preserving-sae/artifacts/exp11_static_matched_nmse}"
 EXP11_SESSION="${EXP11_SESSION:-dpsae-spectral-screen-v2}"
 TIMING_SESSION="${TIMING_SESSION:-exp10-timing-v2}"
@@ -26,7 +27,8 @@ mkdir -p "$CONTROL_ROOT"
 exec > >(tee -a "$LOG") 2>&1
 
 STARTED_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-FLEET_LAUNCHED=0
+FLEET_LAUNCH_STARTED=0
+WORKER_SESSIONS=(exp10-gpu0 exp10-gpu1 exp10-gpu2 exp10-gpu3)
 
 write_status() {
   local stage="$1"
@@ -63,7 +65,7 @@ stop_exp10_fleet() {
   local session
   for session in exp10-gpu0 exp10-gpu1 exp10-gpu2 exp10-gpu3 exp10-finalize; do
     if tmux has-session -t "$session" 2>/dev/null; then
-      tmux kill-session -t "$session"
+      tmux kill-session -t "$session" 2>/dev/null || true
     fi
   done
 }
@@ -71,7 +73,7 @@ stop_exp10_fleet() {
 on_error() {
   local code=$?
   trap - ERR
-  if [[ "$FLEET_LAUNCHED" == "1" ]]; then
+  if [[ "$FLEET_LAUNCH_STARTED" == "1" ]]; then
     stop_exp10_fleet
   fi
   write_status "failed" "error" "exit=$code line=${BASH_LINENO[0]} command=${BASH_COMMAND}"
@@ -120,11 +122,82 @@ if [[ "$(git -C "$ROOT" rev-parse HEAD)" != "$EXPECTED_ROOT_REVISION" ]]; then
   echo "unexpected Exp10 revision in $ROOT" >&2
   exit 2
 fi
+if [[ ! -f "$CONFIG" ]]; then
+  echo "missing frozen Exp10 config: $CONFIG" >&2
+  exit 2
+fi
+
+RESOLVED_CONFIG="$OUTPUT_ROOT/resolved_config.json"
+if [[ ! -f "$RESOLVED_CONFIG" ]]; then
+  echo "missing resolved Exp10 contract: $RESOLVED_CONFIG" >&2
+  exit 2
+fi
+EXPECTED_CONFIG_DIGEST="$(jq -er '.config_digest | select(type == "string" and length == 64)' "$RESOLVED_CONFIG")"
+RESOLVED_ROOT_REVISION="$(jq -er '.repository.revision | select(type == "string")' "$RESOLVED_CONFIG")"
+EXPECTED_CONFIG_SHA256="$(jq -er '.config_sha256 | select(type == "string" and length == 64)' "$RESOLVED_CONFIG")"
+OBSERVED_CONFIG_SHA256="$(sha256sum "$CONFIG" | awk '{print $1}')"
+if [[ "$RESOLVED_ROOT_REVISION" != "$EXPECTED_ROOT_REVISION" ]]; then
+  echo "resolved Exp10 contract belongs to revision $RESOLVED_ROOT_REVISION" >&2
+  exit 2
+fi
+if [[ "$OBSERVED_CONFIG_SHA256" != "$EXPECTED_CONFIG_SHA256" ]]; then
+  echo "resolved Exp10 contract config hash differs from $CONFIG" >&2
+  exit 2
+fi
+EXPECTED_PROBE_SEED="$(jq -er '.runtime.timing_smoke.probe_seed | select(type == "number")' "$CONFIG")"
+EXPECTED_TASK_COUNT="$(jq -er '.runtime.timing_smoke.task_count | select(type == "number")' "$CONFIG")"
+EXPECTED_MAXIMUM_POD_HOURS="$(jq -er '.runtime.timing_smoke.maximum_projected_pod_hours | select(type == "number")' "$CONFIG")"
+EXPECTED_MATRIX_FORMAT="$(jq -er '.benchmark.companion_full_code_matrix_format | select(type == "string")' "$CONFIG")"
+EXPECTED_L2_OPTIMIZATION="$(jq -er '.benchmark.companion_l2_path_optimization | select(type == "string")' "$CONFIG")"
+
+mapfile -t WORKER_DONE_PATHS < <(
+  jq -r --arg output_root "$OUTPUT_ROOT" '
+    .runtime.sparse_worker_shards
+    | to_entries[]
+    | $output_root
+      + "/workers/worker_"
+      + (.key | tostring)
+      + "_"
+      + .value.method
+      + "_"
+      + (.value.probe_seeds[0] | tostring)
+      + "_"
+      + (.value.probe_seeds[-1] | tostring)
+      + ".json"
+  ' "$CONFIG"
+)
+if [[ "${#WORKER_DONE_PATHS[@]}" -ne "${#WORKER_SESSIONS[@]}" ]]; then
+  echo "frozen worker artifact mapping must contain exactly four workers" >&2
+  exit 2
+fi
 
 TIMING_REPORT="$OUTPUT_ROOT/timing_smoke.json"
 write_status "timing_gate" "running" "waiting for blind timing report"
 wait_for_artifact "$TIMING_SESSION" "$TIMING_REPORT" "timing_gate"
-if ! jq -e '.complete == true and .passed == true' "$TIMING_REPORT" >/dev/null; then
+if ! jq -e \
+  --arg config_digest "$EXPECTED_CONFIG_DIGEST" \
+  --arg matrix_format "$EXPECTED_MATRIX_FORMAT" \
+  --arg l2_optimization "$EXPECTED_L2_OPTIMIZATION" \
+  --argjson probe_seed "$EXPECTED_PROBE_SEED" \
+  --argjson task_count "$EXPECTED_TASK_COUNT" \
+  --argjson maximum_pod_hours "$EXPECTED_MAXIMUM_POD_HOURS" \
+  '
+    .schema_version == 4
+    and .complete == true
+    and .config_digest == $config_digest
+    and .probe_seed == $probe_seed
+    and .task_count == $task_count
+    and .names_and_concept_results_suppressed == true
+    and .saved_concept_metric_count == 0
+    and .companion_full_code_matrix_format == $matrix_format
+    and .companion_l2_path_optimization == $l2_optimization
+    and (.projection.projected_pod_hours | type == "number")
+    and (.passed == (.projection.projected_pod_hours <= $maximum_pod_hours))
+  ' "$TIMING_REPORT" >/dev/null; then
+  write_status "timing_gate" "error" "blind timing report failed schema-v4/config/runtime identity checks"
+  exit 1
+fi
+if ! jq -e '.passed == true' "$TIMING_REPORT" >/dev/null; then
   projected="$(jq -r '.projection.projected_pod_hours // "missing"' "$TIMING_REPORT")"
   write_status "timing_gate" "halted" "blind timing gate failed; projected_pod_hours=$projected"
   exit 0
@@ -140,14 +213,40 @@ if ! jq -e '.complete == true' "$EXP11_SUMMARY" >/dev/null; then
 fi
 
 while true; do
-  gpu3_memory="$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -i 3 | tr -d ' ')"
-  if [[ "$gpu3_memory" -le 512 ]]; then
+  gpu_snapshot="$(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits)"
+  gpu_memory_by_index=()
+  while IFS=',' read -r gpu_index gpu_memory; do
+    gpu_index="${gpu_index//[[:space:]]/}"
+    gpu_memory="${gpu_memory//[[:space:]]/}"
+    if [[ ! "$gpu_index" =~ ^[0-3]$ || ! "$gpu_memory" =~ ^[0-9]+$ ]]; then
+      echo "invalid four-GPU memory snapshot row: index=$gpu_index memory=$gpu_memory" >&2
+      exit 2
+    fi
+    gpu_memory_by_index[$gpu_index]="$gpu_memory"
+  done <<< "$gpu_snapshot"
+
+  gpu_blockers=()
+  gpu_summary=()
+  for gpu_index in 0 1 2 3; do
+    if [[ -z "${gpu_memory_by_index[$gpu_index]:-}" ]]; then
+      echo "four-GPU memory snapshot omitted GPU $gpu_index" >&2
+      exit 2
+    fi
+    gpu_memory="${gpu_memory_by_index[$gpu_index]}"
+    gpu_summary+=("GPU${gpu_index}=${gpu_memory}MiB")
+    if (( gpu_memory > 512 )); then
+      gpu_blockers+=("GPU${gpu_index}=${gpu_memory}MiB")
+    fi
+  done
+  if [[ "${#gpu_blockers[@]}" -eq 0 ]]; then
     break
   fi
-  write_status "gpu_release" "waiting" "GPU3 memory_used_mib=$gpu3_memory"
+  blocker_detail="$(IFS=', '; echo "${gpu_blockers[*]}")"
+  write_status "gpu_release" "waiting" "blocked_by=$blocker_detail"
   sleep "$POLL_SECONDS"
 done
-write_status "gpu_release" "passed" "all four A40s available"
+gpu_detail="$(IFS=', '; echo "${gpu_summary[*]}")"
+write_status "gpu_release" "passed" "all four A40s available; $gpu_detail"
 
 for session in exp10-gpu0 exp10-gpu1 exp10-gpu2 exp10-gpu3 exp10-finalize; do
   if tmux has-session -t "$session" 2>/dev/null; then
@@ -157,22 +256,39 @@ for session in exp10-gpu0 exp10-gpu1 exp10-gpu2 exp10-gpu3 exp10-finalize; do
 done
 
 write_status "concept_pilot" "launching" "starting four frozen Exp10 workers and finalizer"
+FLEET_LAUNCH_STARTED=1
 (
   cd "$ROOT"
   env \
     OUTPUT_ROOT="$OUTPUT_ROOT" \
     MODEL_CACHE="$MODEL_CACHE" \
+    CONFIG="$CONFIG" \
     PYTHON="$PYTHON" \
     SAEBENCH_ROOT="$SAEBENCH_ROOT" \
     CHECKPOINT_DIR="$CHECKPOINT_DIR" \
     HF_HOME="$HF_HOME" \
     bash scripts/run_exp10_concept_4xa40.sh
 )
-FLEET_LAUNCHED=1
 
 FINAL_AUDIT="$OUTPUT_ROOT/artifact_audit_final.json"
 deadline="$(( $(date +%s) + MAX_EXP10_SECONDS ))"
 while [[ ! -f "$FINAL_AUDIT" ]]; do
+  for worker_index in "${!WORKER_SESSIONS[@]}"; do
+    worker_done="${WORKER_DONE_PATHS[$worker_index]}"
+    if [[ -f "$worker_done" ]]; then
+      continue
+    fi
+    worker_session="${WORKER_SESSIONS[$worker_index]}"
+    record="$(session_record "$worker_session")"
+    if [[ "$record" == "missing" ]]; then
+      write_status "concept_pilot" "error" "$worker_session disappeared before $worker_done"
+      false
+    fi
+    if [[ "${record%% *}" == "1" ]]; then
+      write_status "concept_pilot" "error" "$worker_session exited ${record#* } before $worker_done"
+      false
+    fi
+  done
   record="$(session_record exp10-finalize)"
   if [[ "$record" == "missing" ]]; then
     write_status "concept_pilot" "error" "exp10-finalize disappeared before final audit"

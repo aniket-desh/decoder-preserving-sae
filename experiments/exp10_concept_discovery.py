@@ -21,9 +21,9 @@ import resource
 import subprocess
 import sys
 import time
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, NamedTuple, Sequence
 
 import numpy as np
 import torch
@@ -39,6 +39,20 @@ from dpsae.saebench_adapter import (
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "configs/exp10_concept_discovery.json"
 DEFAULT_OUTPUT = ROOT / "artifacts/exp10_concept_discovery"
+
+
+@dataclass
+class CompanionProbeMetrics:
+    test_f1: float
+    test_acc: float
+    test_auc: float
+    val_auc: float
+
+
+class CompanionProbeResult(NamedTuple):
+    metrics: CompanionProbeMetrics
+    classifier: Any
+    scaler: None
 
 
 def canonical_json(value: Any) -> str:
@@ -111,6 +125,11 @@ def load_config(path: Path = DEFAULT_CONFIG) -> dict[str, Any]:
         raise ValueError("companion probes must match sae-probes' unfiltered L2 logreg baseline")
     if benchmark.get("companion_full_code_matrix_format") != "scipy_csr_exact_values":
         raise ValueError("companion full-code probes must use the frozen exact-value CSR format")
+    if (
+        benchmark.get("companion_l2_path_optimization")
+        != "parallel_independent_cold_C_loky_cold_selected_C_refit"
+    ):
+        raise ValueError("companion L2 probes must use the frozen parallel cold-C optimization")
     if "unfiltered logreg baseline" not in benchmark["companion_regularization_rationale"]:
         raise ValueError("companion regularization rationale is missing")
     model = config["model"]
@@ -130,6 +149,8 @@ def load_config(path: Path = DEFAULT_CONFIG) -> dict[str, Any]:
         raise ValueError("exp10 requires exactly four frozen sparse worker shards")
     if len(runtime["companion_seed_shards"]) != worker_count:
         raise ValueError("exp10 requires exactly four frozen companion seed shards")
+    if int(runtime.get("companion_full_code_cold_C_jobs_per_worker", 0)) != 6:
+        raise ValueError("exp10 requires six independent cold-C jobs per full-code worker")
     sparse_pairs = [
         (shard["method"], int(seed))
         for shard in runtime["sparse_worker_shards"]
@@ -1054,6 +1075,152 @@ def _full_code_csr(code: Tensor) -> Any:
     return sparse
 
 
+def _probe_matrix(value: Any) -> Any:
+    """Normalize torch/numpy/scipy inputs without changing any numeric value."""
+
+    from scipy.sparse import issparse
+
+    if issparse(value):
+        return value.tocsr(copy=False)
+    if isinstance(value, Tensor):
+        if value.device.type != "cpu":
+            raise ValueError("companion probe matrices must be on CPU")
+        return value.detach().contiguous().numpy()
+    return np.asarray(value)
+
+
+def _companion_cv_splits(X_train: Any, y_train: np.ndarray, seed: int) -> list[Any]:
+    """Mirror sae-probes v0.4.0 ``get_cv`` and ``get_splits`` exactly."""
+
+    from sklearn.model_selection import LeavePOut, StratifiedKFold
+
+    n_samples = X_train.shape[0]
+    if n_samples <= 12:
+        cv: Any = LeavePOut(2)
+    elif n_samples < 128:
+        cv = StratifiedKFold(n_splits=6, shuffle=True, random_state=seed)
+    else:
+        val_size = min(int(0.2 * n_samples), 100)
+        train_size = n_samples - val_size
+        cv = [(list(range(train_size)), list(range(train_size, n_samples)))]
+    if not hasattr(cv, "split"):
+        return list(cv)
+    return [
+        (train_index, val_index)
+        for train_index, val_index in cv.split(X_train, y_train)
+        if len(np.unique(y_train[val_index])) == 2
+    ]
+
+
+def _cold_l2_validation_score(
+    C: float,
+    train: Any,
+    train_labels: np.ndarray,
+    splits: Sequence[Any],
+    seed: int,
+) -> float:
+    """Evaluate one frozen C with fresh cold estimators on every CV fold."""
+
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import roc_auc_score
+
+    fold_scores = []
+    for train_index, val_index in splits:
+        fold_labels = train_labels[train_index]
+        if len(np.unique(fold_labels)) < 2:
+            fold_scores.append(0.5)
+            continue
+        model = LogisticRegression(C=C, random_state=seed, max_iter=1000)
+        model.fit(train[train_index], fold_labels)
+        probability = model.predict_proba(train[val_index])[:, 1]
+        fold_scores.append(float(roc_auc_score(train_labels[val_index], probability)))
+    return float(np.mean(fold_scores))
+
+
+def find_best_reg_l2_parallel_cold_C(
+    X_train: Any,
+    y_train: Any,
+    X_test: Any,
+    y_test: Any,
+    *,
+    seed: int,
+    n_jobs: int,
+    _parallel_backend: str = "loky",
+) -> CompanionProbeResult:
+    """Run the exact sae-probes cold L2 fits concurrently across C values.
+
+    Every candidate remains a fresh cold sklearn estimator. Joblib returns
+    scores in the original high-to-low-C order, preserving ``np.argmax`` ties,
+    and the selected C receives the exact upstream cold shuffled full refit.
+    """
+
+    from joblib import Parallel, delayed, parallel_config
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
+
+    train = _probe_matrix(X_train)
+    test = _probe_matrix(X_test)
+    train_labels = np.asarray(y_train)
+    test_labels = np.asarray(y_test)
+    if train.shape[0] != len(train_labels) or test.shape[0] != len(test_labels):
+        raise ValueError("companion probe matrix/label lengths differ")
+    if train.shape[1] != test.shape[1]:
+        raise ValueError("companion train/test widths differ")
+    if n_jobs < 1:
+        raise ValueError("parallel cold-C job count must be positive")
+    if _parallel_backend not in {"loky", "threading"}:
+        raise ValueError("parallel cold-C backend must be loky or threading")
+
+    original_cs = np.logspace(5, -5, 10)
+    best_C: float | None = None
+    avg_scores: list[float] = []
+    if train.shape[0] > 3:
+        splits = _companion_cv_splits(train, train_labels, seed)
+        backend_options = {"inner_max_num_threads": 1} if _parallel_backend == "loky" else {}
+        with parallel_config(backend=_parallel_backend, **backend_options):
+            avg_scores = Parallel(n_jobs=min(n_jobs, len(original_cs)))(
+                delayed(_cold_l2_validation_score)(
+                    float(C),
+                    train,
+                    train_labels,
+                    splits,
+                    seed,
+                )
+                for C in original_cs
+            )
+        best_C = float(original_cs[int(np.argmax(avg_scores))])
+
+    final_model = LogisticRegression(
+        **({"C": best_C} if best_C is not None else {}),
+        random_state=seed,
+        max_iter=1000,
+    )
+    rng = np.random.RandomState(seed)
+    shuffle_idx = rng.permutation(train.shape[0])
+    shuffled_train = train[shuffle_idx]
+    shuffled_labels = train_labels[shuffle_idx]
+    final_model.fit(shuffled_train, shuffled_labels)
+
+    prediction = final_model.predict(test)
+    probability = final_model.predict_proba(test)[:, 1]
+    if best_C is None:
+        val_auc = float(
+            roc_auc_score(
+                shuffled_labels,
+                final_model.predict_proba(shuffled_train)[:, 1],
+            )
+        )
+    else:
+        val_auc = float(np.max(avg_scores))
+    metrics = CompanionProbeMetrics(
+        test_f1=float(f1_score(test_labels, prediction, average="weighted")),
+        test_acc=float(accuracy_score(test_labels, prediction)),
+        test_auc=float(roc_auc_score(test_labels, probability)),
+        val_auc=val_auc,
+    )
+    return CompanionProbeResult(metrics=metrics, classifier=final_model, scaler=None)
+
+
 def run_companion_job(
     *,
     config: Mapping[str, Any],
@@ -1136,12 +1303,13 @@ def run_companion_job(
                 adapter, X_train, device=torch_device
             )
             test_code, test_reconstruction = _representations(adapter, X_test, device=torch_device)
-            full_code = find_best_reg(
+            full_code = find_best_reg_l2_parallel_cold_C(
                 _full_code_csr(train_code),
                 y_train,
                 _full_code_csr(test_code),
                 y_test,
                 seed=probe_seed,
+                n_jobs=int(config["runtime"]["companion_full_code_cold_C_jobs_per_worker"]),
             )
             reconstruction = find_best_reg(
                 train_reconstruction,
@@ -1173,6 +1341,12 @@ def run_companion_job(
             "num_train": num_train,
             "regularization": "sae_probes_find_best_reg_l2",
             "full_code_matrix_format": "scipy_csr_exact_values",
+            "l2_path_optimization": (
+                "parallel_independent_cold_C_loky_cold_selected_C_refit"
+            ),
+            "full_code_cold_C_jobs": int(
+                config["runtime"]["companion_full_code_cold_C_jobs_per_worker"]
+            ),
             "heldout_split_id": heldout_identity["split_id"],
             "heldout_example_count": len(test_labels),
             "heldout_example_id_policy": heldout_identity["example_id_policy"],
@@ -1600,7 +1774,7 @@ def _assemble_timing_smoke_report(
     )
     passed = projection["projected_pod_hours"] <= float(smoke["maximum_projected_pod_hours"])
     return {
-        "schema_version": 2,
+        "schema_version": 4,
         "complete": True,
         "passed": passed,
         "config_digest": resolved["config_digest"],
@@ -1612,6 +1786,12 @@ def _assemble_timing_smoke_report(
         "names_and_concept_results_suppressed": True,
         "saved_concept_metric_count": 0,
         "companion_full_code_matrix_format": "scipy_csr_exact_values",
+        "companion_l2_path_optimization": (
+            "parallel_independent_cold_C_loky_cold_selected_C_refit"
+        ),
+        "companion_full_code_cold_C_jobs_per_worker": int(
+            config["runtime"]["companion_full_code_cold_C_jobs_per_worker"]
+        ),
         "thread_quota": dict(thread_quota),
         "cache_generation_timing": dict(cache_generation_timing),
         "tasks": list(rows),
@@ -1739,12 +1919,15 @@ def run_timing_smoke(
                 test_code,
                 _test_recon,
             ) in companion_representations.values():
-                find_best_reg(
+                find_best_reg_l2_parallel_cold_C(
                     _full_code_csr(train_code),
                     y_train,
                     _full_code_csr(test_code),
                     y_test,
                     seed=probe_seed,
+                    n_jobs=int(
+                        config["runtime"]["companion_full_code_cold_C_jobs_per_worker"]
+                    ),
                 )
 
         _, full_code_l2_seconds = _timed_call(torch_device, fit_full_codes)
@@ -1756,7 +1939,13 @@ def run_timing_smoke(
                 _test_code,
                 test_recon,
             ) in companion_representations.values():
-                find_best_reg(train_recon, y_train, test_recon, y_test, seed=probe_seed)
+                find_best_reg(
+                    train_recon,
+                    y_train,
+                    test_recon,
+                    y_test,
+                    seed=probe_seed,
+                )
 
         _, reconstruction_l2_seconds = _timed_call(torch_device, fit_reconstructions)
         companion_stage = {
@@ -1815,7 +2004,7 @@ def verify_timing_smoke_gate(config: Mapping[str, Any], output_root: Path) -> di
     report = read_json(path)
     smoke = config["runtime"]["timing_smoke"]
     required = {
-        "schema_version": 2,
+        "schema_version": 4,
         "complete": True,
         "passed": True,
         "config_digest": canonical_digest(config),
@@ -1824,6 +2013,12 @@ def verify_timing_smoke_gate(config: Mapping[str, Any], output_root: Path) -> di
         "names_and_concept_results_suppressed": True,
         "saved_concept_metric_count": 0,
         "companion_full_code_matrix_format": "scipy_csr_exact_values",
+        "companion_l2_path_optimization": (
+            "parallel_independent_cold_C_loky_cold_selected_C_refit"
+        ),
+        "companion_full_code_cold_C_jobs_per_worker": int(
+            config["runtime"]["companion_full_code_cold_C_jobs_per_worker"]
+        ),
     }
     for key, expected in required.items():
         if report.get(key) != expected:

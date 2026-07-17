@@ -68,6 +68,7 @@
     "regularization": "l1",
     "companion_regularization": "l2",
     "companion_full_code_matrix_format": "scipy_csr_exact_values",
+    "companion_l2_path_optimization": "parallel_independent_cold_C_loky_cold_selected_C_refit",
     "companion_regularization_rationale": "Sparse selection uses sae-probes L1 exactly; original, reconstruction, and full-code representations use the benchmark's unfiltered logreg baseline, whose find_best_reg default is L2. All companion representations share the same L2 CV grid and probe seed.",
     "ks": [
       1,
@@ -561,6 +562,7 @@
       ]
     ],
     "cache_adapters_once_per_worker": true,
+    "companion_full_code_cold_C_jobs_per_worker": 6,
     "cold_cache_timing_source_policy": "in_process_monotonic_or_hash_bound_external_provenance",
     "timing_smoke": {
       "probe_seed": 2027071799,

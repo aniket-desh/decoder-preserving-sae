@@ -31,6 +31,49 @@ def native_payload(*, method: str, d_in: int = 3, d_sae: int = 5, k: int = 2):
     }, model
 
 
+def _cold_reference_l2(X_train, y_train, X_test, y_test, *, seed: int):
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
+
+    train = runner._probe_matrix(X_train)
+    test = runner._probe_matrix(X_test)
+    train_labels = np.asarray(y_train)
+    test_labels = np.asarray(y_test)
+    cs = np.logspace(5, -5, 10)
+    scores = []
+    for C in cs:
+        fold_scores = []
+        for train_index, val_index in runner._companion_cv_splits(train, train_labels, seed):
+            if len(np.unique(train_labels[train_index])) < 2:
+                fold_scores.append(0.5)
+                continue
+            model = LogisticRegression(C=C, random_state=seed, max_iter=1000)
+            model.fit(train[train_index], train_labels[train_index])
+            fold_scores.append(
+                roc_auc_score(
+                    train_labels[val_index], model.predict_proba(train[val_index])[:, 1]
+                )
+            )
+        scores.append(float(np.mean(fold_scores)))
+    best_C = float(cs[int(np.argmax(scores))])
+    model = LogisticRegression(C=best_C, random_state=seed, max_iter=1000)
+    shuffle = np.random.RandomState(seed).permutation(train.shape[0])
+    model.fit(train[shuffle], train_labels[shuffle])
+    prediction = model.predict(test)
+    probability = model.predict_proba(test)[:, 1]
+    return {
+        "C": best_C,
+        "metrics": {
+            "test_f1": float(f1_score(test_labels, prediction, average="weighted")),
+            "test_acc": float(accuracy_score(test_labels, prediction)),
+            "test_auc": float(roc_auc_score(test_labels, probability)),
+            "val_auc": float(np.max(scores)),
+        },
+        "decision": model.decision_function(test),
+        "prediction": prediction,
+    }
+
+
 def test_frozen_config_hashes_dataset_family_and_regularization_contracts():
     config = runner.load_config()
 
@@ -39,6 +82,11 @@ def test_frozen_config_hashes_dataset_family_and_regularization_contracts():
     assert config["benchmark"]["regularization"] == "l1"
     assert config["benchmark"]["companion_regularization"] == "l2"
     assert config["benchmark"]["companion_full_code_matrix_format"] == "scipy_csr_exact_values"
+    assert (
+        config["benchmark"]["companion_l2_path_optimization"]
+        == "parallel_independent_cold_C_loky_cold_selected_C_refit"
+    )
+    assert config["runtime"]["companion_full_code_cold_C_jobs_per_worker"] == 6
     assert config["benchmark"]["saebench_include_llm_baseline"] is False
     assert "unfiltered logreg baseline" in config["benchmark"]["companion_regularization_rationale"]
     assert set(config["benchmark"]["family_by_dataset"]) == set(config["benchmark"]["datasets"])
@@ -141,7 +189,7 @@ def test_timing_smoke_gate_accepts_only_the_frozen_blind_contract(tmp_path: Path
         )
     )
     report = {
-        "schema_version": 2,
+        "schema_version": 4,
         "complete": True,
         "passed": True,
         "config_digest": runner.canonical_digest(config),
@@ -150,6 +198,10 @@ def test_timing_smoke_gate_accepts_only_the_frozen_blind_contract(tmp_path: Path
         "names_and_concept_results_suppressed": True,
         "saved_concept_metric_count": 0,
         "companion_full_code_matrix_format": "scipy_csr_exact_values",
+        "companion_l2_path_optimization": (
+            "parallel_independent_cold_C_loky_cold_selected_C_refit"
+        ),
+        "companion_full_code_cold_C_jobs_per_worker": 6,
         "cache_generation_timing": {
             "source": "in_process_monotonic",
             "generation_seconds": 100.0,
@@ -205,13 +257,110 @@ def test_full_code_csr_preserves_values_and_lbfgs_outputs():
     )
 
 
-def test_timing_gate_rejects_obsolete_dense_schema(tmp_path: Path):
+@pytest.mark.parametrize("sparse_case", [False, True])
+def test_parallel_cold_C_matches_sequential_reference_best_C_and_outputs(sparse_case: bool):
+    rng = np.random.RandomState(23 if sparse_case else 19)
+    rows = 260
+    width = 2048 if sparse_case else 16
+    matrix = np.zeros((rows, width), dtype=np.float32)
+    if sparse_case:
+        for row in range(rows):
+            columns = rng.choice(width, size=12, replace=False)
+            matrix[row, columns] = rng.normal(size=12)
+    else:
+        matrix[:] = rng.normal(size=matrix.shape)
+    truth = rng.normal(size=width)
+    noise = 0.35 if sparse_case else 2.0
+    logits = matrix @ truth + noise * rng.normal(size=rows)
+    labels = (logits > np.median(logits)).astype(np.int64)
+    train, test = matrix[:180], matrix[180:]
+    if sparse_case:
+        from scipy.sparse import csr_matrix
+
+        train, test = csr_matrix(train), csr_matrix(test)
+
+    reference = _cold_reference_l2(train, labels[:180], test, labels[180:], seed=31)
+    optimized = runner.find_best_reg_l2_parallel_cold_C(
+        train,
+        labels[:180],
+        test,
+        labels[180:],
+        seed=31,
+        n_jobs=2,
+        _parallel_backend="threading",
+    )
+
+    assert optimized.classifier.C == reference["C"]
+    optimized_metrics = runner._metrics_dict(optimized)
+    for name, value in reference["metrics"].items():
+        assert optimized_metrics[name] == pytest.approx(value, abs=2e-6, rel=0)
+    np.testing.assert_allclose(
+        optimized.classifier.decision_function(test),
+        reference["decision"],
+        rtol=0,
+        atol=2e-6,
+    )
+    np.testing.assert_array_equal(
+        optimized.classifier.predict(test), reference["prediction"]
+    )
+    assert optimized.classifier.coef_.shape[1] == width
+
+
+def test_parallel_cold_C_rejects_path_reuse_counterexample(monkeypatch):
+    import joblib.externals.loky.process_executor as loky_process
+
+    original_sysconf = loky_process.os.sysconf
+
+    def sandbox_safe_sysconf(name):
+        if name == "SC_SEM_NSEMS_MAX":
+            return 256
+        return original_sysconf(name)
+
+    monkeypatch.setattr(loky_process.os, "sysconf", sandbox_safe_sysconf)
+    monkeypatch.setattr(loky_process, "_system_limits_checked", False)
+    monkeypatch.setattr(loky_process, "_system_limited", None)
+    rng = np.random.RandomState(1061)
+    rows, width = 60, 20
+    matrix = rng.normal(size=(rows, width)).astype(np.float32)
+    matrix *= np.logspace(-2, 2, width).astype(np.float32)
+    truth = rng.normal(size=width) / np.sqrt(width)
+    score = matrix @ truth
+    score += rng.normal(size=rows) * np.std(score) * 0.8
+    labels = (score > np.median(score)).astype(np.int64)
+    train, test = matrix[:42], matrix[42:]
+    assert np.all(np.any(train != 0, axis=0))
+    from scipy.sparse import csr_matrix
+
+    train_csr, test_csr = csr_matrix(train), csr_matrix(test)
+    reference = _cold_reference_l2(train_csr, labels[:42], test_csr, labels[42:], seed=72)
+    optimized = runner.find_best_reg_l2_parallel_cold_C(
+        train_csr,
+        labels[:42],
+        test_csr,
+        labels[42:],
+        seed=72,
+        n_jobs=2,
+    )
+
+    assert reference["C"] == 599.4842503189409
+    assert optimized.classifier.C == reference["C"]
+    for name, value in reference["metrics"].items():
+        assert runner._metrics_dict(optimized)[name] == pytest.approx(value, abs=1e-10, rel=0)
+    np.testing.assert_allclose(
+        optimized.classifier.decision_function(test_csr),
+        reference["decision"],
+        rtol=0,
+        atol=1e-10,
+    )
+
+
+def test_timing_gate_rejects_obsolete_path_reuse_schema(tmp_path: Path):
     config = runner.load_config()
     smoke = config["runtime"]["timing_smoke"]
     (tmp_path / "timing_smoke.json").write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 3,
                 "complete": True,
                 "passed": True,
                 "config_digest": runner.canonical_digest(config),

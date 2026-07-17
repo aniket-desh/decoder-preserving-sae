@@ -74,6 +74,9 @@ def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
             "dataset_manifest_sha256": AUDIT.canonical_digest(datasets),
             "family_by_dataset": {"task_a": "family_a"},
             "companion_full_code_matrix_format": "scipy_csr_exact_values",
+            "companion_l2_path_optimization": (
+                "parallel_independent_cold_C_loky_cold_selected_C_refit"
+            ),
             "probe_seeds": seeds,
             "ks": [1, 2],
         },
@@ -85,6 +88,7 @@ def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
                 {"method": "dpsae", "probe_seeds": seeds},
             ],
             "companion_seed_shards": [seeds, []],
+            "companion_full_code_cold_C_jobs_per_worker": 6,
             "timing_smoke": {
                 "probe_seed": 99,
                 "task_count": 1,
@@ -134,7 +138,7 @@ def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
     _json(
         output / "timing_smoke.json",
         {
-            "schema_version": 2,
+            "schema_version": 4,
             "complete": True,
             "passed": True,
             "config_digest": digest,
@@ -142,6 +146,10 @@ def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
             "task_count": 1,
             "saved_concept_metric_count": 0,
             "companion_full_code_matrix_format": "scipy_csr_exact_values",
+            "companion_l2_path_optimization": (
+                "parallel_independent_cold_C_loky_cold_selected_C_refit"
+            ),
+            "companion_full_code_cold_C_jobs_per_worker": 6,
         },
     )
     split = AUDIT._expected_split(config, "task_a", 11, 4)
@@ -282,6 +290,10 @@ def _build_tree(tmp_path: Path) -> tuple[Path, Path]:
             "num_train": 4,
             "regularization": "sae_probes_find_best_reg_l2",
             "full_code_matrix_format": "scipy_csr_exact_values",
+            "l2_path_optimization": (
+                "parallel_independent_cold_C_loky_cold_selected_C_refit"
+            ),
+            "full_code_cold_C_jobs": 6,
             "heldout_split_id": split["split_id"],
             "heldout_example_count": 4,
             "heldout_example_id_policy": split["example_id_policy"],
