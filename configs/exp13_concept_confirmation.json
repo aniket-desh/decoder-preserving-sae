@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "experiment_id": "exp13_concept_confirmation",
+  "status": "frozen_pending_exp12_authorization_and_user_approval",
+  "base_experiment": {
+    "config_path": "configs/exp10_concept_discovery.json",
+    "required_experiment_id": "exp10_concept_discovery",
+    "reuse_lower_level_evaluators": [
+      "run_sparse_job",
+      "run_companion_job"
+    ],
+    "activation_cache_policy": "hash_bound_adoption_of_final_exp10_cache_without_regeneration",
+    "required_timing_schema_version": 7,
+    "required_final_audit_phase": "final"
+  },
+  "authorization": {
+    "exp12_config_path": "configs/exp12_pythia_fresh_confirmation.json",
+    "artifact_name": "concept_evaluation_authorization.json",
+    "required_experiment": "exp12_concept_evaluation_authorization",
+    "required_pair_count": 3,
+    "required_authorized_value": true,
+    "required_excluded_pilot_checkpoint_id": "pythia160m_block8_s0_25m",
+    "required_confirmatory_inference": {
+      "global_family_block_interval_is_gate_forming": true,
+      "family_specific_p_values": "one_sided_centered_paired_stratified_heldout_example_bootstrap",
+      "holm_adjustment_scope": "family_specific_reporting_only",
+      "family_significance_is_gate_forming": false,
+      "individual_concepts": "descriptive_only"
+    },
+    "require_common_selected_checkpoint": true,
+    "require_all_matched_quality_gates": true
+  },
+  "runtime": {
+    "worker_count": 4,
+    "pair_count": 3,
+    "method_order": ["mse", "dpsae"],
+    "probe_seed_count": 10,
+    "sparse_assignment": "lexicographic_pair_slot_method_seed_slot_modulo_four",
+    "companion_assignment": "lexicographic_pair_slot_seed_slot_modulo_four",
+    "sparse_jobs_per_worker": [15, 15, 15, 15],
+    "companion_jobs_per_worker": [8, 8, 7, 7],
+    "shard_template_sha256": "76e61e1394ecae77070e7030beed3835333555c8e90b018b2a87e6b78f09a985",
+    "cache_adoption_requires_all_file_sha256": true,
+    "cache_regeneration_forbidden": true,
+    "adapter_cache": "load_both_methods_once_per_pair_per_worker",
+    "timing_projection": {
+      "source": "final_exp10_schema_v7_projected_pod_hours",
+      "pair_multiplier": 3,
+      "conservative_fixed_cost_accounting": "multiply_complete_pilot_projection_including_fixed_terms",
+      "maximum_projected_pod_hours": 7.5,
+      "concept_metrics_forbidden": true
+    },
+    "status_poll_seconds": 30,
+    "worker_timeout_seconds": 27000
+  },
+  "statistics": {
+    "primary_metric": "test_auc",
+    "primary_k": 5,
+    "probe_seed_aggregation": "mean_within_pair_task_method_before_any_pair_or_task_aggregation",
+    "pair_macro": "mean_taskwise_dpsae_minus_mse_after_probe_seed_averaging",
+    "all_pair_macros_strictly_positive": true,
+    "minimum_median_pair_macro": 0.005,
+    "pooled_interval": "family_block_bootstrap_of_pair_averaged_task_deltas",
+    "pooled_lower95_strictly_positive": true,
+    "bootstrap_samples": 10000,
+    "bootstrap_seed": 2027071891,
+    "confidence_level": 0.95,
+    "family_tests": {
+      "method": "one_sided_centered_paired_stratified_heldout_example_bootstrap",
+      "samples": 10000,
+      "seed": 2027071892,
+      "multiplicity": "holm",
+      "gate_forming": false,
+      "reporting_only": true
+    }
+  },
+  "candidates": {
+    "requires_overall_confirmation_gate": true,
+    "task_rule": "positive_pair_averaged_sparse_delta_in_all_three_checkpoint_pairs",
+    "checkpoint_local": true,
+    "minimum_probe_seed_count": 5,
+    "probe_seed_denominator": 10,
+    "ranking": ["descending_probe_seed_frequency", "descending_mean_absolute_weight", "dataset", "feature_id"],
+    "equal_method_budgets": true,
+    "maximum_per_method": 300,
+    "never_quota_fill": true,
+    "retain_contributing_sparse_provenance_and_prediction_hashes": true
+  },
+  "retention": {
+    "sparse_predictions": "exact_heldout_labels_ids_decision_scores_predictions_per_k",
+    "companion_predictions": "exact_heldout_labels_ids_decision_scores_predictions_per_representation",
+    "hash_every_result_file": true,
+    "retain_failed_worker_status": true,
+    "retain_pre_and_post_aggregate_audits": true
+  },
+  "provenance": {
+    "source_files": [
+      "configs/exp13_concept_confirmation.json",
+      "experiments/exp13_concept_confirmation.py",
+      "scripts/audit_exp13_concept_confirmation.py",
+      "scripts/run_exp13_concept_confirmation_4xa40.sh",
+      "experiments/exp10_concept_discovery.py",
+      "experiments/exp12_pythia_fresh_confirmation.py",
+      "src/dpsae/saebench_adapter.py"
+    ]
+  }
+}
