@@ -13,16 +13,16 @@ savefig.pad_inches: 0.02
 
 font.family: sans-serif
 font.sans-serif: D-DIN, DejaVu Sans
-font.size: 7.25
+font.size: 8.25
 mathtext.fontset: dejavusans
 
 axes.facecolor: white
 axes.edgecolor: 4C566A
 axes.labelcolor: 2E3440
 axes.titlecolor: 2E3440
-axes.titlesize: 8.0
+axes.titlesize: 9.0
 axes.titleweight: semibold
-axes.labelsize: 7.25
+axes.labelsize: 8.25
 axes.linewidth: 0.75
 axes.axisbelow: True
 axes.grid: True
@@ -33,8 +33,8 @@ axes.prop_cycle: cycler('color', ['5E81AC', 'D08770', 'B48EAD', 'A3BE8C', 'BF616
 
 xtick.color: 4C566A
 ytick.color: 4C566A
-xtick.labelsize: 6.75
-ytick.labelsize: 6.75
+xtick.labelsize: 7.75
+ytick.labelsize: 7.75
 xtick.direction: out
 ytick.direction: out
 xtick.major.size: 3.0
@@ -56,7 +56,7 @@ lines.markeredgewidth: 0.7
 patch.linewidth: 0.6
 
 legend.frameon: False
-legend.fontsize: 6.75
+legend.fontsize: 7.75
 legend.handlelength: 1.6
 legend.handletextpad: 0.5
 legend.columnspacing: 0.9

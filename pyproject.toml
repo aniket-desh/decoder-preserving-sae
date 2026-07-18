@@ -22,10 +22,9 @@ dev = [
 ]
 experiments = [
   "datasets>=4.0",
+  "joblib>=1.4",
+  "scikit-learn==1.7.2",
   "transformers>=5.0",
-]
-autointerp = [
-  "openai>=2.0",
 ]
 
 [tool.hatch.build.targets.wheel]

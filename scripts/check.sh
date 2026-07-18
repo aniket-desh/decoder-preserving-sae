@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-uv run ruff check src tests
-uv run pytest
-
+PYTHONPATH=src uv run --no-sync --extra dev --extra experiments ruff check \
+  src experiments scripts tests
+PYTHONPATH=src uv run --no-sync --extra dev --extra experiments pytest -q

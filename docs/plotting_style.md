@@ -43,7 +43,7 @@ with paper_context():
     save_figure(fig, "figures/result")
 ```
 
-The built-in widths are 5.50 inches for the current ICLR text block, 2.62 inches for a half-width panel, and 7.00 inches for a wide preprint figure. Pass a measured width directly for another venue. The style loads the repository's pinned D-DIN Regular, Italic, and Bold files directly, so local, RunPod, and CI renders use the same glyphs; DejaVu Sans is retained only as the unsupported-math fallback, and tick labels use the supported ASCII minus rather than D-DIN's absent Unicode-minus glyph. D-DIN Condensed is restricted to irreducible short labels, while D-DIN Expanded is restricted to sparse display accents and never appears on axes, ticks, legends, or ordinary annotations. Final exports are vector PDF plus exact-size 300-DPI PNG; the canonical exporter does not use a tight crop.
+The built-in widths are 5.50 inches for the current ICLR text block, 2.62 inches for a half-width panel, and 7.00 inches for a wide preprint figure. Pass a measured width directly for another venue. At final size, ordinary and axis-label text is 8.25 pt, ticks and legends are 7.75 pt, compact annotations are at least 7.5 pt, and the rare in-figure title is 9 pt. The style loads the repository's pinned D-DIN Regular, Italic, and Bold files directly, so local, RunPod, and CI renders use the same glyphs; DejaVu Sans is retained only as the unsupported-math fallback, and tick labels use the supported ASCII minus rather than D-DIN's absent Unicode-minus glyph. D-DIN Condensed is restricted to irreducible short labels, while D-DIN Expanded is restricted to sparse display accents and never appears on axes, ticks, legends, or ordinary annotations. Final exports are vector PDF plus exact-size 300-DPI PNG; the canonical exporter does not use a tight crop.
 
 For lightweight work in any repository, install the portable style once:
 
@@ -56,12 +56,12 @@ Then use `plt.style.use("aniket-nord")`. The semantic Python layer is still pref
 ## Figure grammar
 
 - One figure answers one scientific question. Panels may show the mechanism, primary estimate, and boundary of the claim, but they should form one argument.
-- Use sentence-case panel titles and short axis labels with units. Put experimental detail in the caption rather than inside the axes.
+- Do not use in-figure panel titles; use short axis labels with units and put experimental detail in the caption rather than inside the axes.
 - Show raw paired observations when their pairing matters. Use arrows, connecting lines, or aligned points so the reader does not have to infer the comparison.
 - Show uncertainty in the same visual unit as the estimate. State whether intervals cover seeds, held-out groups, samples, or Monte Carlo directions.
 - Prefer direct labels for one or two series. Use one shared frameless legend when several methods recur, ordered baseline, primary method, then controls.
 - Use pale fills to explain structure or uncertainty and saturated strokes for data. Large saturated rectangles should be rare.
-- Use panel labels `A`, `B`, and `C` through `label_panels` when the caption refers to panels.
+- Do not add `A`, `B`, or `C` panel letters. Refer to panels as `Left`, `Center`, and `Right` in the caption.
 - Keep top and right spines absent, grids light, and reference lines visually subordinate to measured data.
 - Never encode scientific importance through color saturation alone. Line width, marker size, and z-order should emphasize the declared primary comparison.
 

@@ -25,6 +25,14 @@ FONT_DIR = Path(__file__).with_name("fonts") / "d-din"
 FIGURE_FONT_FAMILY = "D-DIN"
 CONDENSED_FONT_FAMILY = "D-DIN Condensed"
 EXPANDED_FONT_FAMILY = "D-DIN Exp"
+FIGURE_FONT_SIZES = {
+    "base": 8.25,
+    "axis_label": 8.25,
+    "tick": 7.75,
+    "legend": 7.75,
+    "title": 9.0,
+    "annotation": 7.5,
+}
 VENDORED_FONT_FILES = (
     "D-DIN.ttf",
     "D-DIN-Italic.ttf",

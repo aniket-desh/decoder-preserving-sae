@@ -21,6 +21,7 @@ from dpsae.closure_plots import (  # noqa: E402
     validate_payload,
     write_summary_table,
 )
+from dpsae.plot_style import FONT_DIR, STYLE_PATH  # noqa: E402
 from dpsae.release_manifest import (  # noqa: E402
     atomic_json,
     canonical_digest,
@@ -71,8 +72,11 @@ def _validate_payload_manifest(path: Path, payload_path: Path, release: dict) ->
     if len(records) != 1:
         raise ValueError("closure payload build manifest must identify one payload output")
     record = records[0]
-    if Path(record.get("path", "")).resolve() != payload_path:
-        raise ValueError("closure payload path disagrees with its build manifest")
+    recorded_path = record.get("path")
+    if not isinstance(recorded_path, str) or not Path(recorded_path).is_absolute():
+        raise ValueError("closure payload build manifest has no absolute source path")
+    # Promotion from the immutable run tree to a paper checkout may relocate the
+    # payload. The signed byte count and digest remain the scientific identity.
     if (
         record.get("bytes") != payload_path.stat().st_size
         or record.get("sha256") != sha256_stable_file(payload_path)
@@ -149,6 +153,11 @@ def main() -> None:
         "plot_payload_manifest": file_record(payload_manifest_path, payload_manifest_path.parent),
         "renderer": file_record(ROOT / "src/dpsae/closure_plots.py", ROOT),
         "plot_style": file_record(ROOT / "src/dpsae/plot_style.py", ROOT),
+        "matplotlib_style": file_record(STYLE_PATH, ROOT),
+        "figure_fonts": {
+            filename: file_record(FONT_DIR / filename, ROOT)
+            for filename in ("D-DIN.ttf", "D-DIN-Italic.ttf", "D-DIN-Bold.ttf")
+        },
         "figures": figures,
         "omitted_unavailable_figures": omitted,
         "summary_table": table_record,

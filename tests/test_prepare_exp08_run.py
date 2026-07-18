@@ -32,8 +32,11 @@ def test_contract_binds_plot_code_and_source_baselines(tmp_path, monkeypatch) ->
     assert {
         "scripts/finalize_exp08_candidates.sh",
         "scripts/plot_exp08_candidates.py",
+        "scripts/run_exp08_gpu_runpod.sh",
+        "scripts/run_exp08_synthetic_runpod.sh",
         "src/dpsae/plot_style.py",
     }.issubset(contract["code"])
+    assert all((clean_root / path).is_file() for path in contract["code"])
     expected_baselines = {
         "static_baseline_evaluation",
         "structured_baseline_metrics",

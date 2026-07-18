@@ -20,7 +20,6 @@ import math
 import platform
 import subprocess
 import time
-from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -41,16 +40,16 @@ from dpsae.plot_style import (
     LABELS,
     LINESTYLES,
     MARKERS,
-    METHOD_ORDER,
     apply_paper_style,
     clean_axis,
     savefig,
 )
 from dpsae.sae import TiedSignedTopKSAE
-from dpsae.spectral import decoder_gains, optimal_decoder_tail, truncated_svd
+from dpsae.spectral import optimal_decoder_tail, truncated_svd
 
 
 GROUPS = ("nuisance", "moderate", "weak")
+EXPERIMENT_METHODS = ("mse", "isotropic", "whitened", "decoder_only")
 
 
 def parse_args() -> argparse.Namespace:
@@ -588,7 +587,7 @@ def run_sparse(config: dict[str, Any], seeds: list[int]) -> tuple[list, list, li
             )
             group_only[group] = (raw - train_mean) / train_rms
 
-        for method in METHOD_ORDER:
+        for method in EXPERIMENT_METHODS:
             model, curves, elapsed = train_method(
                 method,
                 initial_state,
@@ -746,7 +745,7 @@ def plot_tradeoffs(
 ) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(6.8, 2.7))
     ax = axes[0]
-    for method in METHOD_ORDER:
+    for method in EXPERIMENT_METHODS:
         rows = grouped_rows(metrics, method)
         xs = [float(row["test_nmse"]) for row in rows]
         ys = [float(row["decoder_distortion"]) for row in rows]
@@ -767,7 +766,7 @@ def plot_tradeoffs(
 
     ax = axes[1]
     x_positions = np.arange(len(GROUPS))
-    for method in METHOD_ORDER:
+    for method in EXPERIMENT_METHODS:
         medians, lows, highs = [], [], []
         for group in GROUPS:
             values = [float(row["group_nmse"]) for row in grouped_rows(groups, method, group)]
@@ -811,7 +810,7 @@ def plot_recovery(groups: list[dict[str, str]], figures: Path) -> None:
         (axes[0], "matched_cosine", "Dictionary recovery", "Matched $|\cos|$"),
         (axes[1], "support_f1", "Support recovery", "Support F1"),
     ):
-        for method in METHOD_ORDER:
+        for method in EXPERIMENT_METHODS:
             medians, lows, highs = [], [], []
             for group in GROUPS:
                 values = [float(row[metric]) for row in grouped_rows(groups, method, group)]
@@ -858,7 +857,7 @@ def plot_training(curves: list[dict[str, str]], figures: Path) -> None:
             "Exact relative distortion",
         ),
     ):
-        for method in METHOD_ORDER:
+        for method in EXPERIMENT_METHODS:
             method_rows = grouped_rows(curves, method)
             steps = sorted({int(row["step"]) for row in method_rows})
             seeds = sorted({int(row["seed"]) for row in method_rows})

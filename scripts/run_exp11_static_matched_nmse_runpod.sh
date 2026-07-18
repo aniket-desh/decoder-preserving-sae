@@ -3,6 +3,14 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STAGE="${1:-all}"
+if [[ "$STAGE" == "-h" || "$STAGE" == "--help" ]]; then
+  echo "usage: $0 [validate|screen|confirm|finalize|all]"
+  exit 0
+fi
+if [[ "$STAGE" != "--worker" && ! "$STAGE" =~ ^(validate|screen|confirm|finalize|all)$ ]]; then
+  echo "usage: $0 [validate|screen|confirm|finalize|all]" >&2
+  exit 2
+fi
 case "$STAGE" in
   all|screen) DEFAULT_SESSION="dpsae-spectral-screen" ;;
   confirm) DEFAULT_SESSION="dpsae-spectral-confirm" ;;
@@ -30,6 +38,7 @@ if [[ "$STAGE" == "--worker" ]]; then
     "$STAGE" \
     --reference-artifact-root "$REFERENCE_ROOT" \
     2>&1 | tee -a "$LOG_DIR/${STAGE}.log"
+  exit 0
 fi
 
 if ! command -v tmux >/dev/null 2>&1; then

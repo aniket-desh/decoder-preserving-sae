@@ -270,16 +270,16 @@ def test_builder_emits_hashed_null_payload_outside_core_and_core_reaudits(tmp_pa
     )["complete"] is True
 
 
-def test_policy_excludes_post_audit_outputs_and_includes_optional_exp13_sources():
+def test_policy_excludes_post_audit_outputs_and_unrun_branch_sources():
     policy = json.loads((ROOT / "configs/arxiv_release_closure.json").read_text())
     assert "release_plot_inputs" not in {row["id"] for row in policy["artifact_groups"]}
     assert "exp13_concept_confirmation" in {row["id"] for row in policy["artifact_groups"]}
     sources = {row["path"] for row in policy["source_files"]}
+    assert all((ROOT / path).is_file() for path in sources)
+    assert not any("exp12" in path or "exp13" in path or "autointerp" in path for path in sources)
     assert {
-        "configs/exp13_concept_confirmation.json",
-        "docs/exp13_concept_confirmation.md",
-        "experiments/exp13_concept_confirmation.py",
-        "scripts/audit_exp13_concept_confirmation.py",
-        "scripts/run_exp13_concept_confirmation_4xa40.sh",
-        "scripts/poll_exp10_autointerp_batch.py",
+        "experiments/exp09_frozen_network.py",
+        "experiments/exp10_concept_discovery.py",
+        "experiments/exp11_static_matched_nmse.py",
+        "scripts/audit_exp10_artifacts.py",
     } <= sources

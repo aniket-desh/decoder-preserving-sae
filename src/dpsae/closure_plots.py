@@ -21,6 +21,7 @@ import numpy as np
 
 from dpsae.plot_style import (
     CATEGORICAL,
+    FIGURE_FONT_SIZES,
     NEUTRAL,
     SEMANTIC,
     clean_axis,
@@ -366,7 +367,7 @@ def plot_static_nmse_control(
                         xytext=(4, 4),
                         textcoords="offset points",
                         color=NEUTRAL["text"],
-                        fontsize=6.5,
+                        fontsize=FIGURE_FONT_SIZES["annotation"],
                     )
         ax.axhline(0, color=NEUTRAL["reference"], linestyle=":", linewidth=0.8)
         ax.set_xlabel("NMSE ratio to MSE")

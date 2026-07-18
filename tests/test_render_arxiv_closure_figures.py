@@ -49,6 +49,24 @@ def test_renderer_requires_payload_output_bound_to_core_release(tmp_path):
         RENDERER._validate_payload_manifest(manifest, payload.resolve(), release)
 
 
+def test_renderer_allows_hash_identical_payload_relocation(tmp_path):
+    source = tmp_path / "source" / "closure_payload.json"
+    source.parent.mkdir()
+    source.write_text('{"complete": true}\n')
+    manifest = tmp_path / "closure_payload_manifest.json"
+    release = {"manifest_sha256": "a" * 64}
+    _payload_manifest(manifest, source, release["manifest_sha256"])
+
+    relocated = tmp_path / "relocated" / "closure_payload.json"
+    relocated.parent.mkdir()
+    relocated.write_bytes(source.read_bytes())
+
+    observed = RENDERER._validate_payload_manifest(
+        manifest, relocated.resolve(), release
+    )
+    assert observed["complete"] is True
+
+
 def test_renderer_rejects_payload_manifest_for_another_core_release(tmp_path):
     payload = tmp_path / "closure_payload.json"
     payload.write_text('{"complete": true}\n')

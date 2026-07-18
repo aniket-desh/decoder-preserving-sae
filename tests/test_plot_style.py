@@ -13,6 +13,7 @@ from dpsae.plot_style import (  # noqa: E402
     CONDENSED_FONT_FAMILY,
     EXPANDED_FONT_FAMILY,
     FIGURE_FONT_FAMILY,
+    FIGURE_FONT_SIZES,
     FONT_DIR,
     METHOD_STYLES,
     NORD,
@@ -51,6 +52,12 @@ def test_paper_context_is_local() -> None:
         assert plt.rcParams["font.family"] == ["sans-serif"]
         assert plt.rcParams["font.sans-serif"][0] == FIGURE_FONT_FAMILY
         assert plt.rcParams["axes.unicode_minus"] is False
+        assert plt.rcParams["font.size"] == FIGURE_FONT_SIZES["base"]
+        assert plt.rcParams["axes.labelsize"] == FIGURE_FONT_SIZES["axis_label"]
+        assert plt.rcParams["axes.titlesize"] == FIGURE_FONT_SIZES["title"]
+        assert plt.rcParams["xtick.labelsize"] == FIGURE_FONT_SIZES["tick"]
+        assert plt.rcParams["ytick.labelsize"] == FIGURE_FONT_SIZES["tick"]
+        assert plt.rcParams["legend.fontsize"] == FIGURE_FONT_SIZES["legend"]
     assert plt.rcParams["font.family"] == previous_family
 
 
