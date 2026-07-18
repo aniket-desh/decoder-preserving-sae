@@ -100,7 +100,6 @@
     {"path": "scripts/finalize_arxiv_experiment_closure.py", "required": true},
     {"path": "scripts/render_arxiv_closure_figures.py", "required": true},
     {"path": "scripts/build_arxiv_closure_payload.py", "required": true},
-    {"path": "docs/experiment_plan.md", "required": true},
     {"path": "src/dpsae/exp10_statistics.py", "required": true},
     {"path": "src/dpsae/exp11_static.py", "required": true},
     {"path": "src/dpsae/cpu_quota.py", "required": true},

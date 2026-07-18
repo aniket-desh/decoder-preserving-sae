@@ -60,7 +60,7 @@ See [REPRODUCIBILITY.md](REPRODUCIBILITY.md) for the input layout, validation co
 
 ## Figures
 
-All generated plots use the Nord scientific style in `src/dpsae/plot_style.py`. It fixes semantic method identities, colorblind-redundant markers and line styles, D-DIN figure typography, venue-aware sizing, and paired PDF/PNG export. The plotting contract is recorded in `docs/plotting_style.md`.
+All generated plots use the Nord scientific style in `src/dpsae/plot_style.py`. It fixes semantic method identities, colorblind-redundant markers and line styles, D-DIN figure typography, venue-aware sizing, and paired PDF/PNG export.
 
 Install the portable Matplotlib style for use outside this repository with:
 
