@@ -58,12 +58,3 @@ Large generated files do not belong in Git. The paper-facing release is a hash-a
 
 See [REPRODUCIBILITY.md](REPRODUCIBILITY.md) for the input layout, validation commands, and the distinction between a local smoke reproduction and the full paper run.
 
-## Figures
-
-All generated plots use the Nord scientific style in `src/dpsae/plot_style.py`. It fixes semantic method identities, colorblind-redundant markers and line styles, D-DIN figure typography, venue-aware sizing, and paired PDF/PNG export.
-
-Install the portable Matplotlib style for use outside this repository with:
-
-```bash
-PYTHONPATH=src python3 scripts/install_plot_style.py
-```
